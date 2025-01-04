@@ -1,12 +1,17 @@
-export type		{	AdapterOptions	}		from '@iobroker/adapter-core';
-import { Adapter,	AdapterOptions	}		from '@iobroker/adapter-core';
-import { Mutex }							from 'async-mutex';
-import { sprintf }							from 'sprintf-js';
-import { diff as deepDiff }					from 'deep-diff';
+export type		{	AdapterOptions	}			from '@iobroker/adapter-core';
+import { Adapter,	AdapterOptions	}			from '@iobroker/adapter-core';
+import { Mutex, withTimeout }					from 'async-mutex';
+import { sprintf }								from 'sprintf-js';
+import { diff as deepDiff }						from 'deep-diff';
 
 // see also
 //		https://github.com/ioBroker/ioBroker/wiki/Adapter-Development-Documentation#structure-of-io-packagejson
 //		https://github.com/ioBroker/ioBroker.js-controller/blob/master/packages/adapter/src/lib/adapter/adapter.ts
+
+// MutexTimeoutMs
+const MutexTimeoutMs = 1000*5;		// 5 seconds
+
+
 
 // dateStr(ts)
 export function dateStr(ts: number = Date.now()): string {
@@ -61,9 +66,6 @@ export interface IoStateObj {
 }
 
 
-// FIXME use mutex in all methods
-
-
 // ~~~~~~~~~
 // IoAdapter
 // ~~~~~~~~~
@@ -73,7 +75,7 @@ export class IoAdapter extends Adapter {
 	public			historyId													= '';		// 'sql.0'
 	private			stateChangeSpecs:	Record<string, StateChangeOpts[]>		= {};		// by stateId
 	private			stateObject:		Record<string, ioBroker.StateObject>	= {};		// by stateId
-	private			mutex														= new Mutex();
+	private			mutex														= withTimeout(new Mutex(), MutexTimeoutMs);
 	private			saveConfig:			boolean;
 	public logf = {
 		'silly':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
@@ -144,18 +146,16 @@ export class IoAdapter extends Adapter {
 		// on stateChange
 		// ~~~~~~~~~~~~~~
 		this.on('stateChange', (stateId: string, stateChange: ioBroker.State | null | undefined) => {
-			void this.runExclusive(async () => {				// don't await here; handle state changes one-by-one!
-				if (stateChange) {
-					const { val, ack, ts } = stateChange;
-					if (val === null) {
-						this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'val null', stateId);
-					} else {
-						await this.onChange(stateId, { val, ack, ts });
-					}
+			if (stateChange) {
+				const { val, ack, ts } = stateChange;
+				if (val === null) {
+					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'val null', stateId);
 				} else {
-					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'deleted',  stateId);
+					void this.onChange(stateId, { val, ack, ts });		// dont't await here to avoid mutex deadlock
 				}
-			});
+			} else {
+				this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'deleted',  stateId);
+			}
 		});
 
 		// on unload
@@ -198,7 +198,13 @@ export class IoAdapter extends Adapter {
 	 * @returns
 	 */
 	public async runExclusive<T>(cb: () => Promise<T>): Promise<T> {
-		return this.mutex.runExclusive(cb);
+		try {
+			return await this.mutex.runExclusive(cb);
+
+		} catch (err: unknown) {
+			this.logf.error('%-15s %-15s %-10s after %d ms\n%s', this.constructor.name, 'runExclusive()', 'timeout', MutexTimeoutMs, (new Error('')).stack);
+			return cb();
+		}
 	}
 
 
