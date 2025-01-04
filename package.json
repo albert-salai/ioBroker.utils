@@ -1,0 +1,35 @@
+{
+	"name": "iobroker.io-lib",
+	"version": "0.0.1",
+	"description": "iobroker adapter lib",
+	"homepage": "https://github.com/albert-salai/ioBroker.io-lib#readme",
+	"bugs": {
+		"url": "https://github.com/albert-salai/ioBroker.io-lib/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/albert-salai/ioBroker.io-lib.git"
+	},
+	"license": "MIT",
+	"author": "Albert Salai",
+	"main": "build/main.js",
+	"dependencies": {
+		"@iobroker/adapter-core": "^3.2.3",
+		"ansi-colors": "^4.1.3",
+		"async-mutex": "^0.5.0",
+		"sprintf-js": "^1.1.3"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.17.0",
+		"@types/node": "^22.10.5",
+		"eslint": "^9.17.0",
+		"globals": "^15.14.0",
+		"typescript": "^5.7.2",
+		"typescript-eslint": "^8.19.0"
+	},
+	"scripts": {
+		"build": "tsc",
+		"lint": "eslint",
+		"test": "echo \"Error: no test specified\" && exit 1"
+	}
+}

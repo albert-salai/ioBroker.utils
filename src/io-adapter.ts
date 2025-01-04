@@ -214,6 +214,7 @@ export class IoAdapter extends Adapter {
 				'common':		common,
 				'native':		{}
 			};
+			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 			await this.setForeignObject(stateId, obj);
 		});
 	}
@@ -231,6 +232,7 @@ export class IoAdapter extends Adapter {
 				'common':		common,
 				'native':		{}
 			};
+			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 			await this.setForeignObject(stateId, obj);
 		});
 	}
@@ -248,6 +250,7 @@ export class IoAdapter extends Adapter {
 				'common':		common,
 				'native':		{}
 			};
+			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 			await this.setForeignObject(stateId, obj);
 		});
 	}
@@ -321,6 +324,7 @@ export class IoAdapter extends Adapter {
 				else if (kind === 'E')  { this.logf.info('%-15s %-15s %-10s %-50s %-20s --> %s',	this.constructor.name, 'writeStateObj()', 'edited',  pathStr, JSON.stringify(diff.lhs), JSON.stringify(diff.rhs));	}
 				else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'changed', pathStr, JSON.stringify(diff.item));							}
 
+				// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 				await this.setForeignObject(stateId, newObj);
 				stateObj = await this.getForeignObjectAsync(stateId);
 			}

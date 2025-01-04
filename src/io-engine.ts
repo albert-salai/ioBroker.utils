@@ -3,7 +3,7 @@ import { IoSql, SqlHistoryRow, IoWriteCacheVal }				from './io-sql';
 import { IoStates, AnyState }		from './io-state';
 import { IoOperator }				from './io-operator';
 import { Timer, TimerOpts }			from './io-timer';
-import { sortBy }					from './util';
+import { sortBy }					from './io-util';
 import { sprintf }					from 'sprintf-js';
 
 
@@ -402,7 +402,7 @@ export class IoEngine {
 	/**
 	 *
 	 */
-	private async add_folders() {
+	private async add_folders(): Promise<void> {
 		const folderIds: string[] = [];
 
 		for (const stateId of Object.keys(IoStates.allStates)) {
