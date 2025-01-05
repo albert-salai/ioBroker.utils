@@ -350,12 +350,12 @@ export class IoEngine {
 
 			// timeout
 			if (interval === null) {
-				if (timeout <= 0)	{	await this.adapter.runExclusive(() => cb());	}
-				else				{	Timer.setTimer({ name, timeout,  cb });			}
+				if (timeout <= 0)	{	await cb();											}
+				else				{	Timer.setTimer({ name, timeout,  cb });				}
 
 			// interval
 			} else {
-				if (timeout <= 0)	{	await this.adapter.runExclusive(() => cb());
+				if (timeout <= 0)	{	await cb();
 										Timer.setTimer({ name,          interval, cb });	}
 				else				{	Timer.setTimer({ name, timeout, interval, cb });	}
 			}
@@ -423,4 +423,4 @@ export class IoEngine {
 			});
 		}
 	}
-};
+}

@@ -62,7 +62,7 @@ export class Magnus {
 		const v = Math.log(sdd / c);				// v   := ln(sdd / c);
 		return b*v / (a - v);						// T    = b*v / (a - v)
 	}
-};
+}
 
 
 

@@ -12,7 +12,7 @@ export interface TimerOpts {
 	cb:				TimerCb
 	timeout?:		number,
 	interval?:		number,
-}
+};
 
 // TimerCb
 type TimerCb = () => Promise<void>;
@@ -21,16 +21,16 @@ type TimerCb = () => Promise<void>;
 // Timer
 // ~~~~~
 export class Timer {
-	public static now:			Now			= _now;
-	public static setTimer:		SetTimer	= _setTimer;
-	public static clearTimer:	ClearTimer	= _clearTimer;
-	public name:			string;
-	public timeout:			number | null;
-	public interval:		number | null;
-	public expires:			number;
-	public timeoutId:		ioBroker.Timeout		= null;
-	public intervalId:		ioBroker.Interval		= null;
-	public cb:				TimerCb;
+	public static now:			Now						= _now;
+	public static setTimer:		SetTimer				= _setTimer;
+	public static clearTimer:	ClearTimer				= _clearTimer;
+	public name:				string;
+	public timeout:				number | null;
+	public interval:			number | null;
+	public expires:				number;
+	public timeoutId:			ioBroker.Timeout		= null;
+	public intervalId:			ioBroker.Interval		= null;
+	public cb:					TimerCb;
 
 	constructor(opts: TimerOpts) {
 		this.name	= opts.name;
@@ -108,19 +108,19 @@ function _setTimer(opts: TimerOpts): Timer {
 	// start setTimeout()
 	if (timer.timeout !== null) {
 		//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 1', timer.name, dateStr(Timer.getNow()));
-		timer.timeoutId = adapter.setTimeout(async () => {
+		timer.timeoutId = adapter.setTimeoutAsync(async () => {
 			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 1', timer.name, dateStr(Timer.getNow()));
 
 			// setTimeout() expired
-			await adapter.runExclusive(() => timer.cb());				// may call _clearTimer()
+			await timer.cb();					// may call _clearTimer()
 			timer.timeoutId = null;
 
 			// start setInterval()
 			if (timer.interval !== null) {
 				//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 2', timer.name, dateStr(Timer.getNow()));
-				timer.intervalId = adapter.setInterval(async () => {
+				timer.intervalId = adapter.setIntervalAsync(async () => {
 					//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 2', timer.name, dateStr(Timer.getNow()));
-					await adapter.runExclusive(() => timer.cb());		// may call _clearTimer()
+					await timer.cb();			// may call _clearTimer()
 				}, timer.interval) ?? null;
 			}
 		}, timer.timeout) ?? null;
@@ -128,9 +128,9 @@ function _setTimer(opts: TimerOpts): Timer {
 	// start setInterval()
 	} else if (timer.interval !== null) {
 		//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 3', timer.name, dateStr(Timer.getNow()));
-		timer.intervalId = adapter.setInterval(async () => {
+		timer.intervalId = adapter.setIntervalAsync(async () => {
 			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 3', timer.name, dateStr(Timer.getNow()));
-			await adapter.runExclusive(() => timer.cb());				// may call _clearTimer()
+			await timer.cb();					// may call _clearTimer()
 		}, timer.interval) ?? null;
 	}
 

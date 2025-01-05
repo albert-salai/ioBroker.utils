@@ -118,7 +118,7 @@ export class IoStates {
 			return null;
 		}
 	}
-};
+}
 
 
 
@@ -238,7 +238,7 @@ export class IoState<T extends ValType> extends IoStates {
 			'outputFrom':	this.outputFrom.map(op => `Operator<${op.constructor.name}>`),
 		}
 	}
-};
+}
 
 
 

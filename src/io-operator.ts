@@ -79,4 +79,4 @@ export class IoOperator {
 	public execute(trigger: AnyState): Promise<void> {
 		throw new Error(`${this.constructor.name}: execute() not implemented (trigger ${trigger.stateId})`);
 	}
-};
+}

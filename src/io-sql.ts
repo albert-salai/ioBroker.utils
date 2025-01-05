@@ -7,7 +7,7 @@ export interface IoWriteCacheVal {
 	stateId:		string,
 	val:			ValType,
 	ts:				number,
-};
+}
 
 // SqlConnOpts
 export type SqlConnOpts = MySql.PoolOptions;
@@ -31,7 +31,7 @@ export interface SqlHistoryRow {
 	ts:			number,
 	val:		number | string | boolean,
 	t:			'n'    | 's'    | 'b',
-};
+}
 
 // TblName
 const TblName = [ 'ts_number', 'ts_string', 'ts_bool' ];				// by sql datapoint type 0, 1, 2
@@ -116,7 +116,7 @@ export class IoSql {
 		`;
 
 		// get rows
-		interface TsChunk extends MySql.RowDataPacket { ts: number };
+		interface TsChunk extends MySql.RowDataPacket { ts: number }
 		const [ rows ] = await this.conn().query<TsChunk[]>(qryStr);
 		const timestamps = rows.map(row => row.ts);
 
@@ -156,7 +156,7 @@ export class IoSql {
 		// get rows
 		const qryStr  = selects.join(' UNION ALL ') + ` ORDER BY ${order_by} ${LIMIT}`;
 
-		interface HistoryRow extends MySql.RowDataPacket, SqlHistoryRow {};
+		interface HistoryRow extends MySql.RowDataPacket, SqlHistoryRow {}
 		const [ rows ] = await this.conn().query<HistoryRow[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'readHistory()', 'rows', '', JSON.stringify(rows, null, 4));
 
@@ -169,35 +169,6 @@ export class IoSql {
 		//this.logf.debug('%-15s %-15s %-10s %-50s got #%d rows', this.constructor.name, 'readHistory()', 'rows', '', rows.length);
 
 		return rows;
-	}
-
-	/**
-	 *
-	 * @param stateIds
-	 * @param queryOpts
-	 * @returns
-	 */
-	public async delHistory(stateIds: string[], queryOpts: SqlQueryOpts): Promise<Record<string, number>> {
-		await this.waitCache(0);
-
-		const dpIds = stateIds.map(stateId => this.datapoints[stateId]?.id).filter(dpId => (dpId !== undefined));
-		const affectedRows: Record<string, number> = {};		// by tblName
-
-		if (dpIds.length === 0) {
-			this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'delHistory()', 'dpIds', 'empty');
-
-		} else {
-			const datapoints = this.getDatapoints(stateIds);					// { tblName: [ dpId, dpId, ...],  ... }
-			for (const [ tblName, dpIds ] of Object.entries(datapoints)) {		// val AS 'val_number', 'val_string', 'val_bool'
-				const and_cond = this.query_and_cond(queryOpts);
-				const qryStr = `DELETE FROM iobroker.${tblName} WHERE id IN(${dpIds.join(',')}) ${and_cond}`;
-				const [ result ] = await this.conn().query<MySql.ResultSetHeader>(qryStr);
-				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'delHistory()', 'result', '', JSON.stringify( result, null, 4));
-				affectedRows[tblName] = result.affectedRows;
-			}
-		}
-
-		return affectedRows;
 	}
 
 	/**
@@ -240,6 +211,121 @@ export class IoSql {
 
 	/**
 	 *
+	 * @param stateIds
+	 * @param queryOpts
+	 * @returns
+	 */
+	public async delHistory(stateIds: string[], queryOpts: SqlQueryOpts): Promise<Record<string, number>> {
+		await this.waitCache(0);
+
+		const dpIds = stateIds.map(stateId => this.datapoints[stateId]?.id).filter(dpId => (dpId !== undefined));
+		const affectedRows: Record<string, number> = {};		// by tblName
+
+		if (dpIds.length === 0) {
+			this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'delHistory()', 'dpIds', 'empty');
+
+		} else {
+			const datapoints = this.getDatapoints(stateIds);					// { tblName: [ dpId, dpId, ...],  ... }
+			for (const [ tblName, dpIds ] of Object.entries(datapoints)) {		// val AS 'val_number', 'val_string', 'val_bool'
+				const and_cond = this.query_and_cond(queryOpts);
+				const qryStr = `DELETE FROM iobroker.${tblName} WHERE id IN(${dpIds.join(',')}) ${and_cond}`;
+				const [ result ] = await this.conn().query<MySql.ResultSetHeader>(qryStr);
+				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'delHistory()', 'result', '', JSON.stringify( result, null, 4));
+				affectedRows[tblName] = result.affectedRows;
+			}
+		}
+
+		return affectedRows;
+	}
+
+	// ~~~~~~~~~~~~~~~~~~~~~
+	// optimizeTablesAsync()
+	// ~~~~~~~~~~~~~~~~~~~~~
+	public async optimizeTablesAsync() {
+		const tables = TblName.map(tableName => `iobroker.${tableName}`).join(', ');
+		this.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'optimizeTablesAsync()', '.....', `optimizing ${tables}`);
+
+		const [ result ] = await this.conn().query(`OPTIMIZE TABLE ${tables} WAIT 120`);
+		this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'optimizeTablesAsync()', 'result', '', JSON.stringify( result, null, 4));
+
+		this.logf.debug('%-15s %-15s %-10s', this.constructor.name, 'optimizeTablesAsync()', 'done.');
+	}
+
+
+	// ~~~~~~~~~~~~~~~~
+	// cleanUpHistory()
+	// ~~~~~~~~~~~~~~~~
+	async cleanUpHistory() {
+		const adapter	= IoAdapter.this;
+		const historyId	= adapter.historyId;
+
+		// get all stateObjs with enabled changesOnly
+		const stateObjs = Object.values(await adapter.getForeignObjectsAsync('*', 'state')).filter(stateObj => {
+			const custom  = (stateObj.common.custom ?? {})	as Record<string, Record<string, unknown> | undefined>;
+			const history = custom[historyId];
+			return (typeof history === 'object')  &&  history['enabled']  &&  history['changesOnly'];
+		});
+		this.logf.info('%-15s %-25s %-45s processing %d stateObjs ...', this.constructor.name, 'cleanUpHistory()', historyId, stateObjs.length);
+
+		// cleanup iobroker datapoints
+		for (const stateObj of stateObjs) {
+			const  stateId = stateObj._id;
+			this.logf.info('%-15s %-25s %-45s %s', this.constructor.name, 'cleanUpHistory()', stateId, historyId);
+
+			/* FIXME
+			const dp = this._datapoints[stateId];				// { table, id }
+			if (! dp) {
+				this.logf.warn('%-15s %-25s %-45s missing datapoint', this.constructor.name, 'cleanUpHistory()', stateId);
+				const stateChange = await adapter.getForeignStateAsync(stateId);
+				await adapter.setForeignStateAsync(stateId, stateChange.val, stateChange.ack);
+
+			} else {
+				// get/set changesRelogInterval
+				const changesRelogSecs = parseInt(stateObj.common.custom[historyId].changesRelogInterval)  ||  3600*24;		// 1 day
+				if (changesRelogSecs !==          stateObj.common.custom[historyId].changesRelogInterval) {
+					stateObj.common.custom[historyId].changesRelogInterval = changesRelogSecs;
+					await adapter.setForeignObjectAsync(stateId, stateObj);
+				}
+
+				// get unchanged datapoints
+				const unchanged = await this.queryAsync(`
+					WITH cte AS (
+						SELECT ts, val, ack,
+							LAG(ts ) OVER (ORDER BY ts) AS prev_ts,
+							LAG(val) OVER (ORDER BY ts) AS prev_val,
+							LAG(ack) OVER (ORDER BY ts) AS prev_ack
+						FROM  iobroker.${dp.table}
+						WHERE id=${dp.id}
+					)
+					SELECT ts, val, ack FROM cte WHERE (val = prev_val) AND (ack = prev_ack) AND (ts - prev_ts < ${changesRelogSecs*1000})
+				`);
+				if (unchanged.length === 0) {
+					this.logf.debug('%-15s %-25s %-45s', this.constructor.name, 'cleanUpHistory()', stateId);
+
+				} else {
+					if (unchanged.length > 0) {
+						this.logf.debug('%-15s %-25s %-45s deleting %d rows', this.constructor.name, 'cleanUpHistory()', stateId, unchanged.length);
+					}
+					for (const row of unchanged) {
+						this.logf.debug('%-15s %-25s %-45s %s  %s %s', this.constructor.name, 'cleanUpHistory()', stateId, ts_string(row.ts), val_string(row.val), (row.ack ? 'ack' : 'cmd'));
+					}
+
+					// delete unchanged datapoints
+					await this.queryAsync(`
+						DELETE FROM	iobroker.${dp.table}
+						WHERE		id=${dp.id} AND ts IN(${unchanged.map(row => row.ts).join(',')})
+					`);
+					//this.logf.info('%-15s %-25s %-45s %3d datapoints deleted', this.constructor.name, 'cleanUpHistory()', stateId, res.affectedRows));
+					//this.logf.info('%-15s %-25s %-45s %s', this.constructor.name, 'cleanUpHistory()', stateId, JSON.stringify(stateObj, null, 4)));
+				}
+			}
+			*/
+		}
+		this.logf.info('%-15s %-25s %-45s processing %d stateObjs done', this.constructor.name, 'cleanUpHistory()', historyId, stateObjs.length);
+	}
+
+	/**
+	 *
 	 */
 	private async loadDatapoints() {
 		const qryStr = 'SELECT name, id, type from iobroker.datapoints ORDER BY name';
@@ -247,7 +333,7 @@ export class IoSql {
 			name:	string,
 			id:		number,
 			type:	number,
-		};
+		}
 		const [ rows ] = await this.conn().query<Datapoint[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'loadDatapoints()', 'rows',   '', JSON.stringify( rows,   null, 4));
 
@@ -281,20 +367,6 @@ export class IoSql {
 		}
 		return dpTables;
 	}
-
-	// ~~~~~~~~~~~~~~~~~~~~~
-	// optimizeTablesAsync()
-	// ~~~~~~~~~~~~~~~~~~~~~
-	public async optimizeTablesAsync() {
-		const tables = TblName.map(tableName => `iobroker.${tableName}`).join(', ');
-		this.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'optimizeTablesAsync()', '.....', `optimizing ${tables}`);
-
-		const [ result ] = await this.conn().query(`OPTIMIZE TABLE ${tables} WAIT 120`);
-		this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'optimizeTablesAsync()', 'result', '', JSON.stringify( result, null, 4));
-
-		this.logf.debug('%-15s %-15s %-10s', this.constructor.name, 'optimizeTablesAsync()', 'done.');
-	}
-
 
 	/**
 	 *
@@ -352,7 +424,7 @@ export class IoSql {
 		interface CacheStatusRow extends MySql.RowDataPacket {
 			Variable_name:		CacheStatusVar,
 			Value:				string,
-		};
+		}
 		const [ result ] = await this.conn().query<CacheStatusRow[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'cacheLevel()', 'result', '', JSON.stringify( result, null, 4));
 
@@ -368,4 +440,4 @@ export class IoSql {
 
 		return cache_level;
 	}
-};
+}
