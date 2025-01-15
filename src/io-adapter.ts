@@ -8,8 +8,8 @@ import { diff as deepDiff }						from 'deep-diff';
 //		https://github.com/ioBroker/ioBroker/wiki/Adapter-Development-Documentation#structure-of-io-packagejson
 //		https://github.com/ioBroker/ioBroker.js-controller/blob/master/packages/adapter/src/lib/adapter/adapter.ts
 
-// MutexTimeoutMs
-const MutexTimeoutMs = 1000*5;		// 5 seconds
+// AsyncTimeoutMs
+const AsyncTimeoutMs = 1000*10;			// 10 seconds
 
 
 // dateStr(ts)
@@ -28,7 +28,7 @@ export function valStr(val: ioBroker.StateValue): string {					// val: string | 
 
 
 // StateValType, StateChange, StateChangeCb
-export type			ValType			= number | boolean | string;
+export type			ValType			=  number  |  boolean  |  string;
 export interface	StateChange		{ val: ValType, ack: boolean, ts: number }
 type 				StateChangeCb	= (stateChange: StateChange) => void | Promise<void>;
 
@@ -41,8 +41,7 @@ interface StateChangeOpts {
 }
 
 // WriteStateObj
-type StateObjCommon		= ioBroker.SettableStateObject['common'];	// FIXME: use ioBroker.StateCommon
-export interface HistoryObj {								// DEFAULT
+export interface HistoryObj {						// DEFAULT
 	'enabled'?:						boolean,		// false
 	'changesOnly'?:					boolean,		// false		Record changes only
 	'debounceTime'?:				number,			// 0			Only logs the value if it stays unchanged for X ms
@@ -60,10 +59,15 @@ export interface HistoryObj {								// DEFAULT
 	'enableDebugLogs'?:				boolean,		// false		Enable enhanced debug logs for the state
 	'debounce'?:					number,			// 0
 }
-export interface IoStateObj {
-	common:			Partial<StateObjCommon> & { name: string, type: 'number'|'boolean'|'string' },
-	native?:		ioBroker.SettableStateObject['native'],
-	history?:		HistoryObj,
+
+// IoStateOpts<T>		-		same as ioBroker.StateCommon but only with 'name' and 'def' as required properties
+export interface IoStateOpts<T extends ValType> {
+	common:		Omit<Partial<ioBroker.StateCommon>, 'def' | 'type'> & {
+					name:	string,
+					def:	T,
+				},
+	native?:	ioBroker.SettableStateObject['native'],
+	history?:	HistoryObj,
 }
 
 
@@ -75,7 +79,7 @@ export class IoAdapter extends Adapter {
 	public			historyId													= '';		// 'sql.0'
 	private			stateChangeSpecs:	Record<string, StateChangeOpts[]>		= {};		// by stateId
 	private			stateObject:		Record<string, ioBroker.StateObject>	= {};		// by stateId
-	private			mutex														= withTimeout(new Mutex(), MutexTimeoutMs);
+	private			mutex														= withTimeout(new Mutex(), AsyncTimeoutMs);
 	private			saveConfig:			boolean;
 	public logf = {
 		'silly':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
@@ -247,17 +251,24 @@ export class IoAdapter extends Adapter {
 	 * @param common
 	 */
 	//
-	public async writeStateObj(stateId: string, opts: IoStateObj): Promise<ioBroker.StateObject> {
-		// common defautls
-		const optsCommon = Object.assign({ 'role': 'value', 'read': true, 'write': false }, opts.common);
+	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.StateObject> {
+		// type
+		const type: ioBroker.CommonType =
+			(typeof opts.common.def === 'number' ) ? 'number'  :
+			(typeof opts.common.def === 'boolean') ? 'boolean' : 'string';
 
-		// OldObj, NewObj types
-		interface  OldObj { type: 'state', common: Partial<ioBroker.StateCommon>,	native: Record<string, unknown> }
-		interface  NewObj { type: 'state', common:         ioBroker.StateCommon,	native: Record<string, unknown> }
+		// optsCommon with assigned defaults
+		const optsCommon = Object.assign({
+			'type':		type,			// required by ioBroker.StateCommon
+			'read':		true,			// required by ioBroker.StateCommon
+			'write':	false,			// required by ioBroker.StateCommon
+			'role':		'value',		// required by ioBroker.StateCommon
+			'custom':	{},
+		}, opts.common);
 
 		// oldObj, newObj
-		const oldObj: OldObj = { 'type': 'state',	'common': {},			'native':                {} };
-		const newObj: NewObj = { 'type': 'state',	'common': optsCommon,	'native': opts.native ?? {}	};
+		const oldObj: ioBroker.SettableStateObject = { 'type': 'state', 'common': optsCommon, 'native':                {} };
+		const newObj: ioBroker.SettableStateObject = { 'type': 'state', 'common': optsCommon, 'native': opts.native ?? {} };
 
 		// read existing state object
 		let stateObj = await this.getForeignObjectAsync(stateId);
@@ -292,22 +303,27 @@ export class IoAdapter extends Adapter {
 		}
 
 		// create new or update existing object
-		for (const diff of (deepDiff(oldObj, newObj) ?? [])  ) {
+		const diffs = (deepDiff(oldObj, newObj) ?? []);
+		for (const diff of diffs) {
 			const { path, kind } = diff;
 			const pathStr = (path ?? ['']).map(val => String(val)).join('.');
 			if		(kind === 'N')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'added',   pathStr, JSON.stringify(diff.rhs));							}
 			else if (kind === 'D')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'deleted', pathStr, JSON.stringify(diff.lhs));							}
 			else if (kind === 'E')  { this.logf.info('%-15s %-15s %-10s %-50s %-20s --> %s',	this.constructor.name, 'writeStateObj()', 'edited',  pathStr, JSON.stringify(diff.lhs), JSON.stringify(diff.rhs));	}
 			else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'changed', pathStr, JSON.stringify(diff.item));							}
+		}
 
-			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
+		// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
+		if (! stateObj  ||  diffs.length > 0) {
 			await this.setForeignObject(stateId, newObj);
 			stateObj = await this.getForeignObjectAsync(stateId);
 		}
 
 		// return ioBroker.StateObject
 		if (stateObj?.type !== 'state') {
-			throw new Error(`${this.constructor.name}: writeStateObj(): invalid stateObj`);
+			this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'oldObj', stateId, JSON.stringify(oldObj, null, 4));
+			this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'newObj', stateId, JSON.stringify(newObj, null, 4));
+				throw new Error(`${this.constructor.name}: writeStateObj(): invalid stateObj:\n${JSON.stringify(stateObj, null, 4)}`);
 		}
 		return stateObj;
 	}
@@ -454,12 +470,12 @@ export class IoAdapter extends Adapter {
 	 * @returns
 	 */
 	private async runAsync<T>(cb: () => Promise<T>): Promise<T> {
-		// used it in all event handlers and timer handlers
+		// used it in all iobroker event handlers and timer handlers
 		try {
 			return await this.mutex.runExclusive(cb);
 
 		} catch (err: unknown) {
-			this.logf.error('%-15s %-15s %-10s after %d ms\n%s', this.constructor.name, 'runExclusive()', 'timeout', MutexTimeoutMs, (new Error('')).stack);
+			this.logf.error('%-15s %-15s %-10s after %d ms\n%s', this.constructor.name, 'runExclusive()', 'timeout', AsyncTimeoutMs, (new Error('')).stack);
 			return cb();
 		}
 	}

@@ -33,11 +33,13 @@ export interface SqlHistoryRow {
 	t:			'n'    | 's'    | 'b',
 }
 
-// TblName
-const TblName = [ 'ts_number', 'ts_string', 'ts_bool' ];				// by sql datapoint type 0, 1, 2
+// SqlTables
+type  TableNames = 'ts_number' | 'ts_string' | 'ts_bool';
+const TableName: TableNames[] = [ 'ts_number', 'ts_string', 'ts_bool' ];		// by sql datapoint type 0, 1, 2
 
-// Datapoints
-type Datapoints = Record<string, { tblName: string, id: number }>;		// by stateId
+// TableName, Datapoint, Datapoints
+interface Datapoint { tblName: TableNames, id: number }
+type Datapoints = Record<string, Datapoint>;		// by stateId
 
 
 
@@ -242,7 +244,7 @@ export class IoSql {
 	// optimizeTablesAsync()
 	// ~~~~~~~~~~~~~~~~~~~~~
 	public async optimizeTablesAsync() {
-		const tables = TblName.map(tableName => `iobroker.${tableName}`).join(', ');
+		const tables = TableName.map(tableName => `iobroker.${tableName}`).join(', ');
 		this.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'optimizeTablesAsync()', '.....', `optimizing ${tables}`);
 
 		const [ result ] = await this.conn().query(`OPTIMIZE TABLE ${tables} WAIT 120`);
@@ -341,7 +343,7 @@ export class IoSql {
 			const stateId	= row.name;
 			const dpId		= row.id;
 			const dpTypeNb	= row.type;				// 0, 1, 2
-			const tblName	= TblName[dpTypeNb];	//
+			const tblName	= TableName[dpTypeNb];	//
 			if (typeof tblName === 'string') {
 				this.datapoints[stateId] = {
 					'tblName':		tblName,
@@ -349,6 +351,11 @@ export class IoSql {
 				};
 			}
 		}
+	}
+
+	//
+	public stateIds(): string[] {
+		return Object.keys(this.datapoints);
 	}
 
 	/**

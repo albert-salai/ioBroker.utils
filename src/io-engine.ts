@@ -4,11 +4,6 @@ import { IoStates, AnyState }		from './io-state';
 import { IoOperator }				from './io-operator';
 import { Timer, TimerOpts }			from './io-timer';
 import { sortBy }					from './io-util';
-import { sprintf }					from 'sprintf-js';
-
-
-// HistRowSize
-const HistRowSize	= 100*1000;
 
 
 // ~~~~~~~~
@@ -34,7 +29,7 @@ export class IoEngine {
 	 *
 	 */
 	public async start(historyDays: number): Promise<void> {
-		const useHistory = (historyDays > 0) ? await this.sql_connect() : false;
+		const adapter = this.adapter;
 
 		// create own folder objects
 		await this.add_folders();
@@ -42,11 +37,13 @@ export class IoEngine {
 		// ~~~~~~~
 		// HISTORY
 		// ~~~~~~~
+		const useHistory = (historyDays > 0) ? await this.sql_connect() : false;
 		if (useHistory) {
 			this.logf.debug('%-15s %-15s %-10s %-50s %.1f days', this.constructor.name, 'start()', 'history', '...', historyDays);
+			IoOperator.setOnline(false);
 
 			// optimize tables
-			if (this.adapter.config['sql-optimize']) {
+			if (adapter.config['sql-optimize']) {
 				await this.sql.optimizeTablesAsync();
 			}
 
@@ -87,37 +84,34 @@ export class IoEngine {
 			// init Timer
 			Timer.init({ getNow, setTimer, clearTimer });
 
-			// set IoState.onWrite()		-		called recursively
-			let flushed: Promise<void> | undefined;
+			// set IoStates.write()		-		called recursively
 			IoStates.write = async (ioState: AnyState, val: ValType): Promise<void> => {
 				const ts = this.histNow;
 				if (ioState.writable) {
 					this.logf.warn('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', 'skipped', ioState.stateId, dateStr(ts), valStr(val));
 				} else {
 					//if (Date.now() - ts < 1000*60*20)		this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', 'queued',  ioState.stateId, dateStr(ts), valStr(val));
-					const len = this.histWriteCache.push({ 'stateId': ioState.stateId, val, ts });
-					if (len >= HistRowSize/2) {
-						await flushed;
-						flushed = this.sql_flush();
-					}
-					await ioState.valSet(val, ts);			// will recursively call op.execute() --> IoState.write()
+					//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', '...', ioState.stateId, dateStr(ts), valStr(val));
+					this.histWriteCache.push({ 'stateId': ioState.stateId, val, ts });
+					await ioState.valSet(val, ts);			// will recursively call op.execute() -> op.exec() --> IoStates.write()
 				}
 			};
-			await flushed;
-
-			// init states, init operators
-			await this.hist_init({ fromTs });
-			await IoOperator.opInit();
 
 			// process history
+			await this.hist_init({ fromTs });
 			await this.hist_exec({ fromTs });
-			await this.setNow(Date.now());		// process pending OFFLINE timers
 
-			await this.sql_flush();				// write   pending ONLINE  samples
+			// process pending OFFLINE timers
+			await this.setNow(Date.now());
+			await this.sql_flush();
 
 			// close db connection
 			await this.sql.onUnload();
 
+			// init Timer
+			Timer.init();
+			await this.convertTimers();			// convert pending offline timers
+			IoOperator.setOnline(true);
 
 		// don't use history
 		} else {
@@ -125,56 +119,36 @@ export class IoEngine {
 
 			// init states
 			for (const ioState of Object.values(IoStates.allStates)) {
-				const stateId	= ioState.stateId;
-				const state		= await this.adapter.readState(stateId);
-				if (state  &&  state.val !== null) {
-					ioState.valInit({
-						'val':	state.val,
-						'ts':	state.ts
-					});
+				const valState = await adapter.readState(ioState.stateId);
+				if (valState  &&  valState.val !== null) {
+					ioState.valInit(valState.val, valState.ts);
 				}
 			}
 
-			// init operators
-			await IoOperator.opInit();
+			// init Timer
+			Timer.init();
 		}
 
 		// ~~~~~
 		// START
 		// ~~~~~
 
-		// init Timer
-		Timer.init();
-		await this.convertTimers();			// convert pending offline timers
-
 		// IoState.write()
 		IoStates.write = async (ioState: AnyState, val: ValType): Promise<void> => {
-			const ts  =  Date.now();
+			const ts  =   Date.now();
 			const ack = ! ioState.writable;
 			if (ioState.logType === 'write') {
 				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'write()', '', ioState.stateId, dateStr(ts), valStr(val), ack ? '' : ' cmd');
 			}
-			await this.adapter.writeState(ioState.stateId, { val, ack, ts });				// will call subscribed ack change handler
+			await adapter.writeState(ioState.stateId, { val, ack, ts });				// will call subscribed ack change handler
 		};
-
-		// update iobroker state val
-		for (const stateId of Object.keys(IoStates.allStates).sort()) {
-			const ioState = IoStates.allStates[stateId];
-			if (useHistory  &&  ioState?.writable === false  &&  ioState.outputFrom.length > 0) {
-				const state = await this.adapter.readState(ioState.stateId);
-				if (state?.val !== ioState.val) {
-					this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', ioState.constructor.name, 'start()', 'changed', ioState.stateId, dateStr(Timer.now()), valStr(ioState.val));
-					await this.adapter.writeState(ioState.stateId, { 'val': ioState.val, 'ack': true });
-				}
-			}
-		}
 
 		// subscribe iobroker state ack for all operator input states
 		for (const stateId of Object.keys(IoStates.allStates).sort()) {
 			const ioState = IoStates.allStates[stateId];
 			if (ioState) {
 				// subscribe iobroker state changes
-				await this.adapter.subscribe({ stateId, 'ack': true, 'cb': async (stateChange: StateChange) => {
+				await adapter.subscribe({ stateId, 'ack': true, 'cb': async (stateChange: StateChange) => {
 					if (ioState.logType === 'changed'  &&  stateChange.val !== ioState.val) {
 						this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'onChange()', ((stateChange.val === ioState.val) ? 'unchanged' : ''), stateId, dateStr(stateChange.ts), valStr(stateChange.val), stateChange.ack ? '' : ' cmd');
 					}
@@ -184,39 +158,39 @@ export class IoEngine {
 		}
 
 		// started
-		IoOperator.setStarted();
 		this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'start()', '', 'started');
 	}
 
-	/**
-	 *
-	 * @param fromTs
-	 * @returns
-	 */
+
 	private async hist_init({ fromTs }: { fromTs: number }): Promise<void> {
-		this.logf.debug('%-15s %-15s %-10s', this.constructor.name, 'hist_init()', '');
-
-		// allStates
 		const allStates = Object.values(IoStates.allStates).sort(sortBy('stateId'));
-		//this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_init()', 'allStates', JSON.stringify(allStates, null, 4));
+		const sqlOpts = { 'ack': true, 'isNull': false };
 
-		// init histSrc and histDst states
-		for (const ioState of allStates) {
-			const stateId = ioState.stateId;
-			const rows = await this.sql.readHistory([ stateId ], {			// [ { id, ts, val, ack, bool } ]
-				'until': fromTs, 'ack': true, 'desc': true, 'limit': 1
-			});
+		for (const State of allStates) {
+			let val: number | boolean | string;
+			let ts:  number;
+			const rows = await this.sql.readHistory([ State.stateId ], { 'before': fromTs, 'desc': true, 'limit': 1, ...sqlOpts });
 			if (rows[0]) {
-				ioState.valInit({ 'val': rows[0].val, 'ts': rows[0].ts });
+				ts  = rows[0].ts;
+				val = rows[0].val;
 			} else {
-				const state = await this.adapter.readState(stateId);
-				if (state  &&  state.val !== null) {
-					ioState.valInit({ 'val': state.val, 'ts': fromTs });
+				const rows = await this.sql.readHistory([ State.stateId ], { 'from': fromTs, 'limit': 1, ...sqlOpts });
+				if (rows[0]) {
+					ts  = fromTs;
+					val = rows[0].val;
+				} else {
+					const state = await this.adapter.readState(State.stateId);
+					if (state  &&  state.val !== null) {
+						ts  = fromTs;
+						val = state.val;
+					} else {
+						throw new Error(`${this.constructor.name}: hist_init(): ${State.stateId}: not found`);
+					}
 				}
 			}
+			State.valInit(val, ts);
 		}
 	}
-
 
 	/**
 	 *
@@ -231,29 +205,28 @@ export class IoEngine {
 		for (const state of allStates) {
 			const isOutput  = (state.outputFrom.length > 0);
 			const isHistSrc = (state.inputFor.length > 0)  &&  ! isOutput;		// state is input but not output
-			const isHistDst = (!state.writable )  &&    isOutput;		// state is read only     output
+			const isHistDst = (! state.writable 		)  &&    isOutput;		// state is read only     output
 			if (isHistSrc)  					{ srcStates[state.stateId] = state; }
 			if (isHistDst)  					{ dstStates[state.stateId] = state; }
 			if (! isHistSrc  &&  ! isHistDst)	{ skipped  [state.stateId] = state; }
 		}
-		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'skipped',   JSON.stringify(Object.keys(skipped  ).sort(), null, 4));
-		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'srcStates', JSON.stringify(Object.keys(srcStates).sort(), null, 4));
-		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'dstStates', JSON.stringify(Object.keys(dstStates).sort(), null, 4));
 
 		// srcStateIds, dstStateIds
+		const skippedIds  = Object.keys(skipped  ).sort();
 		const srcStateIds = Object.keys(srcStates).sort();
 		const dstStateIds = Object.keys(dstStates).sort();
-
-		// delete history of all histDst states
-		this.logf.debug('%-15s %-15s %-10s %-50s %s', this.constructor.name, 'hist_exec()', 'fromTs', 'deleting history from...', dateStr(fromTs));
-		let now = Date.now();
-		const affectedRows = await this.sql.delHistory(dstStateIds, {
-			'from':		fromTs
-		});
-		this.logf.debug('%-15s %-15s %-10s %-50s %s   (%4.1f s)', this.constructor.name, 'hist_exec()', 'deleted', `#${String(affectedRows['ts_number'] ?? 0)} ts_number, #${String(affectedRows['ts_bool'] ?? 0)} ts_bool`, dateStr(now), (Date.now() - now)/1000);
+		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'skipped',   JSON.stringify(skippedIds,  null, 4));
+		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'srcStates', JSON.stringify(srcStateIds, null, 4));
+		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'dstStates', JSON.stringify(dstStateIds, null, 4));
 
 		// processHist(srcRows), processed
 		const processHist = async (srcRows: SqlHistoryRow[]): Promise<void> => {
+			const now		= Date.now();
+			const fromTs	= srcRows[0]?.ts;
+			const untilTs	= srcRows.slice(-1)[0]?.ts;
+			if (fromTs !== undefined  &&  untilTs !== undefined) {
+				//this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s', this.constructor.name, 'processHist()', 'processing', `#${String(srcRows.length)}`, `until ${dateStr(untilTs)}`, 'from', dateStr(fromTs));
+			}
 			for (const row of srcRows) {
 				if		(row.ts < this.histNow)  { this.logf.error('%-15s %-15s %-10s %-50s %s < %s', this.constructor.name, 'hist_exec()', 'row', row.id, dateStr(row.ts), dateStr(row.ts)); throw new Error(''); }
 				else if (row.ts > this.histNow)  { await this.setNow(row.ts); }
@@ -261,36 +234,95 @@ export class IoEngine {
 				// process srcState
 				const state = srcStates[row.id];
 				if (state) {
+					//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'processHist()', '', state.stateId, dateStr(state.ts), valStr(state.val));
 					await state.valSet(row.val, row.ts);		// will recursively call op.execute() --> IoState.write()
 				}
 			}
+			if (fromTs !== undefined  &&  untilTs !== undefined) {
+				this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s   (%4.1f s)', this.constructor.name, 'processHist()', 'processed', `#${String(srcRows.length)}`, `until ${dateStr(untilTs)}`, 'from', dateStr(fromTs), (Date.now() - now)/1000);
+			}
 		};
 
-		// process tsChunks
-		now = Date.now();
-		const tsChunks = await this.sql.ts_chunks(srcStateIds, HistRowSize, { 'from': fromTs });
-		this.logf.debug('%-15s %-15s %-10s %-50s %s   (%4.1f s)', this.constructor.name, 'hist_exec()', 'tsChunks', `#${String(tsChunks.length)}`, dateStr(now), (Date.now() - now)/1000);
-
+		// read sql history until Date.now()
+		const TargetFlushMs				= 1000;
+		let readLimit					= 1000;
+		let processed:	Promise<void  >	= Promise.resolve();
+		let flushed:	Promise<number>	= Promise.resolve(TargetFlushMs);		// resolves to flushTimeMs
 		for (;;) {
-			// read acknowledged history of all srcStates
-			now = Date.now();
-			const beforeTs = tsChunks.shift();
+			let now = Date.now();
+
+			// wait until cached values are flushed
+			const lastFlushMs = await flushed;
+
+			// read up to ReadHistoryLimit rows of nonNull acknowledged state values
+			readLimit = Math.round(readLimit * TargetFlushMs/lastFlushMs);		// estimate next readLimit
+			readLimit = Math.max(1000, Math.min(50000, readLimit));				// 1000 <= readLimit <= 50000
+			//this.logf.debug('%-15s %-15s %-10s %-43s %-6s %s', this.constructor.name, 'hist_exec()', 'reading', '...', 'from', dateStr(fromTs));
 			const srcRows = await this.sql.readHistory(srcStateIds, {
 				'from':			fromTs,
-				'before':		beforeTs,
 				'ack':			true,
 				'isNull':		false,
+				'limit':		readLimit,
 			});
-			this.logf.debug('%-15s %-15s %-10s %-36s %8s %s   (%4.1f s)', this.constructor.name, 'hist_exec()', 'got', sprintf('%6d rows from %s', srcRows.length, dateStr(fromTs)), 'before', dateStr(beforeTs), (Date.now() - now)/1000);
+			let lastRow = srcRows.slice(-1)[0];
+			if (! lastRow) {
+				break;
+			}
+			let untilTs = lastRow.ts;
+			this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s   (%4.1f s)', this.constructor.name, 'hist_exec()', 'read', `#${String(srcRows.length)}`, `until ${dateStr(untilTs)}`, 'from', dateStr(fromTs), (Date.now() - now)/1000);
+
+			// remove latest row(s) if row limit reached ReadHistoryLimit and update untilTs
+			if (srcRows.length === readLimit) {
+				while (lastRow?.ts === untilTs) {
+					srcRows.pop();
+					lastRow = srcRows.slice(-1)[0];
+				}
+			}
+			lastRow = srcRows.slice(-1)[0];
+			if (! lastRow) {
+				break;
+			}
+
+			// delete history of all histDst states
+			now	= Date.now();
+			untilTs	= lastRow.ts;
+			//this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s', this.constructor.name, 'hist_exec()', 'deleting', '...', `until ${dateStr(untilTs)}`, 'from', dateStr(fromTs));
+			const affectedRows = await this.sql.delHistory(dstStateIds, {		// don't await here
+				'from':		fromTs,
+				'until':	untilTs,
+			});
+			this.logf.debug('%-15s %-15s %-10s %-43s %-6s %s   (%4.1f s)', this.constructor.name, 'sql_flush()', 'deleted', `#${String(affectedRows['ts_number'] ?? 0)} ts_number, #${String(affectedRows['ts_bool'] ?? 0)} ts_bool`, 'from', dateStr(fromTs), (Date.now() - now)/1000);
+
+			// start flushing cached values
+			flushed = this.sql_flush();						// don't await here
 
 			// process history
-			await processHist(srcRows);
+			await processed;
+			processed = processHist(srcRows);
 
-			if (beforeTs === undefined)	break;
-			else						fromTs = beforeTs;
+			fromTs = (untilTs + 1);
 		}
+		await processed;
 	}
 
+
+	/**
+	 *
+	 */
+	public async sql_flush(): Promise<number> {
+		const history	= this.histWriteCache.splice(0, this.histWriteCache.length);
+		const now		= Date.now();
+		const fromTs	= history[0]?.ts;
+		const untilTs	= history.slice(-1)[0]?.ts ?? now;
+		let   elapsedMs	= 0;
+		if (fromTs !== undefined) {
+			//this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s', this.constructor.name, 'hist_exec()', 'writing', `#${String(history.length)}`, `from ${dateStr(fromTs)}`, 'until', dateStr(untilTs));
+			const affectedRows = await this.sql.writeHistory(history);
+			elapsedMs = Date.now() - now;
+			this.logf.debug('%-15s %-15s %-10s %-43s %-6s %s   (%4.1f s)', this.constructor.name, 'sql_flush()', 'written', `#${String(affectedRows['ts_number'] ?? 0)} ts_number, #${String(affectedRows['ts_bool'] ?? 0)} ts_bool`, 'until', dateStr(untilTs), elapsedMs/1000);
+		}
+		return elapsedMs;
+	}
 
 	/**
 	 *
@@ -307,29 +339,32 @@ export class IoEngine {
 
 			// debug log
 			if (timer.expires < this.histNow) {				// histNow <= expires <= nextNow
-				this.logf.error('%-15s %-15s %-10s expires - histNow = %6d <  0 %-13s %s\n%s', this.constructor.name, 'setNow()', 'error', (timer.expires - this.histNow), '', dateStr(this.histNow), timer.toString());
+				this.logf.error('%-15s %-15s %-10s expires - histNow = %6d <  0 %-18s %s\n%s', this.constructor.name, 'setNow()', 'error',	(timer.expires - this.histNow), '', dateStr(this.histNow), timer.toString());
+			} else {
+				//this.logf.debug('%-15s %-15s %-10s expires - histNow = %6d >= 0 %-18s %s %s', this.constructor.name, 'setNow()', '',		(timer.expires - this.histNow), '', dateStr(this.histNow), timer.name);
 			}
 
 			// set histNow, process timer timeout
 			this.histNow = timer.expires;					// histNow := expires <= nextNow
 			await timer.cb();
 
-			// update expires or delete timer
-			if (timer.timeout !== null)		{
-				timer.timeout   = null;
-			}
-			if (timer.interval !== null) {
-				timer.expires  +=  timer.interval;
-				//this.logf.debug('%-15s %-15s %-10s %-50s %s\n%s', this.constructor.name, 'setTimer()', 'repeating', 'interval', dateStr(Timer.getNow()), timer2json(histTimer));
-				this.histTimers.sort(sortBy('expires'));
-			} else {
+			// delete timer
+			if (timer.interval === null) {
 				this.histTimers.shift();
+
+			// update expires
+			} else {
+				timer.expires += timer.interval;
+				this.histTimers.sort(sortBy('expires'));
+				//this.logf.debug('%-15s %-15s %-10s %-50s %s\n%s', this.constructor.name, 'setNow()', 'repeating', 'interval', dateStr(Timer.getNow()), timer2json(histTimer));
 			}
 		}
 
 		// debug log
 		if (this.histNow > nextNow) {						// nextNow - histNow < 0
 			this.logf.error('%-15s %-15s %-10s nextNow - histNow < %6d %-20s %s', this.constructor.name, 'setNow()', 'error', (nextNow - this.histNow), '', dateStr(this.histNow));
+		} else {
+			//this.logf.debug('%-15s %-15s %-10s %-50s %s', this.constructor.name, 'setNow()', 'done', '', dateStr(nextNow));
 		}
 
 		this.histNow = nextNow;
@@ -385,19 +420,6 @@ export class IoEngine {
 		return false;
 	}
 
-
-	/**
-	 *
-	 */
-	public async sql_flush(): Promise<void> {
-		if (this.histWriteCache.length > 0) {
-			const now   = Date.now();
-			const until = this.histWriteCache.slice(-1)[0]?.ts  ??  now;
-			const history = this.histWriteCache.splice(0, this.histWriteCache.length);
-			const affectedRows = await this.sql.writeHistory(history);
-			this.logf.debug('%-15s %-15s %-10s %-36s %8s %s   (%4.1f s)', this.constructor.name, 'sql_flush()', 'written', sprintf('%6d ts_number, %6d ts_bool', affectedRows['ts_number'] ?? 0, affectedRows['ts_bool'] ?? 0), 'until', dateStr(until), (Date.now() - now)/1000);
-		}
-	}
 
 	/**
 	 *

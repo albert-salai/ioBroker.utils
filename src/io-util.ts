@@ -85,8 +85,8 @@ export class IIR {
 			this.b	 = opts.b.map((b) => b/a0);
 			this.a	 = opts.a.map((a) => a/a0);						// a[0] := 1
 			this.w	 = Array<null>(this.a.length).fill(null);		// w[i] := null
-			//IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'constructor()', 'b', JSON.stringify(this.b, null, 4));
-			//IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'constructor()', 'a', JSON.stringify(this.a, null, 4));
+			//IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'constructor()', 'b', JSON.stringify(this.b, null, 4));
+			//IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'constructor()', 'a', JSON.stringify(this.a, null, 4));
 
 		} else {
 			throw new Error(`${this.constructor.name}: constructor(): invalid config ${JSON.stringify(opts)}`);
@@ -248,16 +248,17 @@ export class RLS {
 		this.w_hat.add(gain.multiply(y_err), false);
 
 		/*
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'P',		JSON.stringify(this.P		));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'x', 		JSON.stringify(x			));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'xT',		JSON.stringify(xT			));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'y_hat',	JSON.stringify(y_hat		));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'y_err',	JSON.stringify(y_err		));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'P_x',		JSON.stringify(P_x			));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'xT_P_x',	JSON.stringify(xT_P_x		));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'gain',		JSON.stringify(gain			));
-		IoAdapter.this.IoAdapter.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'w_hat',	JSON.stringify(this.w_hat	));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'P',		JSON.stringify(this.P		));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'x', 		JSON.stringify(x			));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'xT',		JSON.stringify(xT			));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'y_hat',	JSON.stringify(y_hat		));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'y_err',	JSON.stringify(y_err		));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'P_x',		JSON.stringify(P_x			));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'xT_P_x',	JSON.stringify(xT_P_x		));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'gain',		JSON.stringify(gain			));
+		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'w_hat',	JSON.stringify(this.w_hat	));
 		*/
 		return this.w_hat.reshape(this.dimensions).tolist();
 	}
 }
+
