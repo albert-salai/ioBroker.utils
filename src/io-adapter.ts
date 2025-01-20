@@ -251,81 +251,70 @@ export class IoAdapter extends Adapter {
 	 * @param common
 	 */
 	//
-	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.StateObject> {
-		// type
-		const type: ioBroker.CommonType =
-			(typeof opts.common.def === 'number' ) ? 'number'  :
-			(typeof opts.common.def === 'boolean') ? 'boolean' : 'string';
-
-		// optsCommon with assigned defaults
-		const optsCommon = Object.assign({
-			'type':		type,			// required by ioBroker.StateCommon
-			'read':		true,			// required by ioBroker.StateCommon
-			'write':	false,			// required by ioBroker.StateCommon
-			'role':		'value',		// required by ioBroker.StateCommon
-			'custom':	{},
-		}, opts.common);
-
-		// oldObj, newObj
-		const oldObj: ioBroker.SettableStateObject = { 'type': 'state', 'common': optsCommon, 'native':                {} };
-		const newObj: ioBroker.SettableStateObject = { 'type': 'state', 'common': optsCommon, 'native': opts.native ?? {} };
-
-		// read existing state object
-		let stateObj = await this.getForeignObjectAsync(stateId);
-		if (stateObj) {
-			Object.assign(oldObj.common, stateObj.common);
-			Object.assign(oldObj.native, stateObj.native);
+	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.SettableStateObject> {
+		// oldObj
+		const oldStateObj = await this.getForeignObjectAsync(stateId);
+		if (oldStateObj  &&  oldStateObj.type !== 'state') {
+			throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);
 		}
 
-		// update history in newObj.common.custom		-		see https://github.com/ioBroker/ioBroker.sql/blob/master/main.js
-		// FIXME: will overwrite existing history settings
-		if (this.historyId) {
-			// add history from opts.history to newObj.common.custom
-			const optsHistory = opts.history ?? { enabled: false };
-			if (optsHistory.enabled) {
-				const newCustom  = newObj.common.custom = newObj.common.custom ?? {};
-				const newHistory = newCustom[this.historyId] as (HistoryObj | undefined) ?? { 'enabled': false };
-				newCustom[this.historyId] = Object.assign(newHistory, optsHistory, {
-					'changesOnly':				true,			// enable changesOnly
-					'changesRelogInterval':		86400,			// relog  every day  (3600*24 s)
-				});
-				delete newHistory.retention;
+		// oldCustom
+		const oldCustom: Record<string, unknown> = oldStateObj?.common.custom ?? {};
 
-			// copy history from oldObj.common.custom to newObj.common.custom
-			} else if (oldObj.common.custom) {
-				const oldCustom  = oldObj.common.custom;
-				const oldHistory = oldCustom[this.historyId] as (HistoryObj | undefined);
-				if (oldHistory) {
-					const newCustom = newObj.common.custom = newObj.common.custom ?? {};
-					newCustom[this.historyId] = oldHistory;
-				}
-			}
+		// newStateObj
+		let newStateObj: ioBroker.SettableStateObject = {
+			'type':			'state',
+			'common': {
+				'name':		opts.common.name,
+				'def':		opts.common.def,
+				'type':		(typeof opts.common.def === 'number' ) ? 'number' : (typeof opts.common.def === 'boolean') ? 'boolean' : 'string',
+				'read':		true,
+				'write':	false,
+				'role':		'',
+			},
+			'native':		opts.native ?? {},			// Record<string, any>
+		};
+		Object.assign(newStateObj.common, opts.common);
+
+		// newStateObj history
+		if (this.historyId) {
+			newStateObj.common.custom = newStateObj.common.custom ?? {};
+			newStateObj.common.custom[this.historyId] = Object.assign(
+				{ 'enabled': false },				// disabled by default
+				oldCustom[this.historyId],			// overwrite with old  history
+				opts.history,						// overwrite with opts.history
+			);
 		}
 
 		// create new or update existing object
-		const diffs = (deepDiff(oldObj, newObj) ?? []);
-		for (const diff of diffs) {
-			const { path, kind } = diff;
-			const pathStr = (path ?? ['']).map(val => String(val)).join('.');
-			if		(kind === 'N')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'added',   pathStr, JSON.stringify(diff.rhs));							}
-			else if (kind === 'D')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'deleted', pathStr, JSON.stringify(diff.lhs));							}
-			else if (kind === 'E')  { this.logf.info('%-15s %-15s %-10s %-50s %-20s --> %s',	this.constructor.name, 'writeStateObj()', 'edited',  pathStr, JSON.stringify(diff.lhs), JSON.stringify(diff.rhs));	}
-			else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'changed', pathStr, JSON.stringify(diff.item));							}
+		if (! oldStateObj) {
+			this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'newObj', stateId, JSON.stringify(newStateObj, null, 4));
+			await this.setForeignObject(stateId, newStateObj);
+
+		} else {
+			const diffs = deepDiff(oldStateObj.common, newStateObj.common) ?? [];
+			for (const diff of diffs) {
+				const { path, kind } = diff;
+				const pathStr = (path ?? ['']).map(val => String(val)).join('.');
+				if		(kind === 'N')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'added',   pathStr, JSON.stringify(diff.rhs));							}
+				else if (kind === 'D')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'deleted', pathStr, JSON.stringify(diff.lhs));							}
+				else if (kind === 'E')  { this.logf.info('%-15s %-15s %-10s %-50s %-20s --> %s',	this.constructor.name, 'writeStateObj()', 'edited',  pathStr, JSON.stringify(diff.lhs), JSON.stringify(diff.rhs));	}
+				else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'changed', pathStr, JSON.stringify(diff.item));							}
+			}
+
+			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
+			if (diffs.length > 0) {
+				await this.setForeignObject(stateId, newStateObj);
+				const stateObj = await this.getForeignObjectAsync(stateId);
+				if (stateObj?.type !== 'state') {
+					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);
+				}
+				newStateObj = stateObj;
+			}
 		}
 
-		// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
-		if (! stateObj  ||  diffs.length > 0) {
-			await this.setForeignObject(stateId, newObj);
-			stateObj = await this.getForeignObjectAsync(stateId);
-		}
-
-		// return ioBroker.StateObject
-		if (stateObj?.type !== 'state') {
-			this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'oldObj', stateId, JSON.stringify(oldObj, null, 4));
-			this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'newObj', stateId, JSON.stringify(newObj, null, 4));
-				throw new Error(`${this.constructor.name}: writeStateObj(): invalid stateObj:\n${JSON.stringify(stateObj, null, 4)}`);
-		}
-		return stateObj;
+		// return ioBroker.SettableStateObject
+		return newStateObj;
 	}
 
 

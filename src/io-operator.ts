@@ -38,15 +38,16 @@ export abstract class IoOperator {
 	 *
 	 * @returns
 	 */
-	protected init(): Promise<void> {		// called before first execute()
-		return Promise.resolve();
+	protected init(): Promise<boolean> | boolean {		// called before first execute()
+		return true;									// resolves to true if initialization is complete
 	}
+
 
 	/**
 	 *
 	 * @param trigger
 	 */
-	protected abstract execute(trigger: AnyState): Promise<void>;
+	protected abstract execute(trigger: AnyState): Promise<void> | void;
 
 
 	/**
@@ -59,24 +60,27 @@ export abstract class IoOperator {
 		// init
 		if (! this.initialized) {
 			// debug log
-			this.inputs.forEach((input, idx) => {
-				if (input.ts > 0)	{ this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `input [${idx.toString()}]`, input.stateId,  dateStr(input.ts ), valStr(input.val )); }
-				else				{ throw new Error(`${this.constructor.name}: exec(): ${input.stateId} not initilized`); }
-			});
-			this.outputs.forEach((output, idx) => {
-				if (output.ts > 0)	{ this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `output[${idx.toString()}]`, output.stateId, dateStr(output.ts), valStr(output.val)); }
-				else				{ throw new Error(`${this.constructor.name}: exec(): ${output.stateId} not initilized`); }
-			});
-			this.others.forEach((other, idx) => {
-				if (other.ts > 0)	{ this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `other [${idx.toString()}]`, other.stateId,  dateStr(other.ts ), valStr(other.val )); }
-				else				{ throw new Error(`${this.constructor.name}: exec(): ${other.stateId} not initilized`); }
-			});
+			/*
+			this.inputs .forEach((input,  idx) => { this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `input [${idx.toString()}]`, input .stateId, dateStr(input .ts), valStr(input .val)); });
+			this.outputs.forEach((output, idx) => { this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `output[${idx.toString()}]`, output.stateId, dateStr(output.ts), valStr(output.val)); });
+			this.others .forEach((other,  idx) => { this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `other [${idx.toString()}]`, other .stateId, dateStr(other .ts), valStr(other .val)); });
+			*/
 
-			await this.init();
-			this.initialized = true;
+			// ensure all state are initialized
+			const notInitialized = this.inputs.concat(this.outputs).concat(this.others).filter(state => (state.ts < 0));
+			if (notInitialized.length > 0) {
+				for (const state of notInitialized) {
+					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'no init', state.stateId,  dateStr(state.ts ), valStr(state.val ));
+				}
+				throw new Error(`${this.constructor.name}: exec(): some states not initilized`);
+			}
+
+			this.initialized = await this.init();
 		}
 
 		// execute
-		await this.execute(trigger);
+		if (this.initialized) {
+			await this.execute(trigger);
+		}
 	}
 }

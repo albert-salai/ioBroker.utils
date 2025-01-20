@@ -1,6 +1,10 @@
 import { IoAdapter, ValType }		from './io-adapter';
-import MySql 						from 'mysql2/promise';
+import mysql 						from 'mysql2/promise';
 // based on https://sidorares.github.io/node-mysql2/docs/examples/typescript/basic-custom-class
+
+// SqlConnOpts, SqlConn
+type SqlConnOpts	= mysql.ConnectionOptions;
+type SqlConn		= mysql.Connection;
 
 // IoWriteCacheVal
 export interface IoWriteCacheVal {
@@ -9,20 +13,17 @@ export interface IoWriteCacheVal {
 	ts:				number,
 }
 
-// SqlConnOpts
-export type SqlConnOpts = MySql.PoolOptions;
-
 // SqlQueryOpts
 export interface SqlQueryOpts {
-	desc?:			boolean,
+	ack?:			boolean,
+	isNull?:		boolean,
 	at?:			number,
-	limit?:			number,
-	before?:		number | undefined,
 	after?:			number,
 	from?:			number,
+	before?:		number,
 	until?:			number,
-	ack?:			boolean,
-	isNull?:		boolean
+	desc?:			boolean,
+	limit?:			number,
 }
 
 // SqlHistoryRow		-		sql history response
@@ -42,7 +43,6 @@ interface Datapoint { tblName: TableNames, id: number }
 type Datapoints = Record<string, Datapoint>;		// by stateId
 
 
-
 // ~~~~~
 // IoSql
 // ~~~~~
@@ -50,14 +50,14 @@ export class IoSql {
 	private readonly	logf									= IoAdapter.logf;
 	private 			datapoints: 	Datapoints				= {};			// by stateId
 	private				timer?:			NodeJS.Timeout;
-	private				sqlConn?:		MySql.Pool;
+	private				sqlConn?:		SqlConn;
 
 	/**
 	 *
 	 * @param opts
 	 * @returns
 	 */
-	private conn(): MySql.Pool {
+	private conn(): SqlConn {
 		if (this.sqlConn === undefined) {
 			throw new Error(`${this.constructor.name}: conn(): connection not established`);
 		}
@@ -72,7 +72,7 @@ export class IoSql {
 	public async connect(sqlConnOpts: SqlConnOpts): Promise<boolean> {
 		try {
 			this.logf.debug('%-15s %-15s', this.constructor.name, 'init()');
-			this.sqlConn = MySql.createPool(sqlConnOpts);
+			this.sqlConn = await mysql.createConnection(sqlConnOpts);
 			await this.loadDatapoints();
 			//this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'init()', 'datapoints', JSON.stringify(this.datapoints, null, 4));
 			return true;
@@ -99,50 +99,17 @@ export class IoSql {
 	 * @param queryOpts
 	 * @returns
 	 */
-	public async ts_chunks(stateIds: string[], modulo: number, queryOpts: SqlQueryOpts): Promise<number[]> {
-		const and_cond	= this.query_and_cond(queryOpts);
-		const datapoints = this.getDatapoints(stateIds);		// { ts_number: [ dpId, dpId, ...],  ... }
-		const dpIds	= datapoints['ts_number'];
-		if (! dpIds  ||  dpIds.length === 0) {
-			return [];
-		}
-
-		const qryStr = `
-			WITH cte AS (
-				SELECT		ts, ROW_NUMBER() OVER (ORDER BY ts) as rowNum
-				FROM		iobroker.ts_number
-				WHERE		id IN(${dpIds.join(',')}) ${and_cond}
-				ORDER BY	ts
-			)
-			SELECT ts FROM cte WHERE MOD(rowNum, ${String(modulo)}) = 0 ORDER BY TS
-		`;
-
-		// get rows
-		interface TsChunk extends MySql.RowDataPacket { ts: number }
-		const [ rows ] = await this.conn().query<TsChunk[]>(qryStr);
-		const timestamps = rows.map(row => row.ts);
-
-		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'ts_chunks()', 'rows', '', JSON.stringify(timestamps, null, 4));
-		return timestamps;
-	}
-
-	/**
-	 *
-	 * @param stateIds
-	 * @param queryOpts
-	 * @returns
-	 */
 	public async readHistory(stateIds: string[], queryOpts: SqlQueryOpts): Promise<SqlHistoryRow[]> {
-		await this.waitCache(0);
+		await this.waitCache();
 
 		const and_cond	= this.query_and_cond(queryOpts);
-		const order_by	= (queryOpts.desc ) ? 'ts DESC'						: 'ts ASC';
+		const order_by	= (queryOpts.desc ) ? 'ts DESC'								: 'ts ASC';
 		const LIMIT		= (queryOpts.limit) ? `LIMIT ${String(queryOpts.limit)}`	: '';
 
-		const selects = [];
+		const tblSelects = [];
 		const datapoints = this.getDatapoints(stateIds);					// { ts_number: [ dpId, dpId, ...],  ... }
 		for (const [ table, dpIds ] of Object.entries(datapoints)) {		// table: 'ts_number', 'ts_string', 'ts_bool' --> t: 'n' | 's' | 'b'
-			selects.push(`(
+			tblSelects.push(`(
 				SELECT		name as id, ts, val, '${String(table[3])}' AS t
 				FROM		iobroker.${table} LEFT JOIN iobroker.datapoints USING(id)
 				WHERE		id IN(${dpIds.join(',')}) ${and_cond}
@@ -151,14 +118,14 @@ export class IoSql {
 			)`);
 		}
 
-		if (selects.length === 0) {
+		if (tblSelects.length === 0) {
 			return [];
 		}
 
 		// get rows
-		const qryStr  = selects.join(' UNION ALL ') + ` ORDER BY ${order_by} ${LIMIT}`;
+		const qryStr = tblSelects.join(' UNION ALL ') + ` ORDER BY ${order_by} ${LIMIT}`;
 
-		interface HistoryRow extends MySql.RowDataPacket, SqlHistoryRow {}
+		interface HistoryRow extends mysql.RowDataPacket, SqlHistoryRow {}
 		const [ rows ] = await this.conn().query<HistoryRow[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'readHistory()', 'rows', '', JSON.stringify(rows, null, 4));
 
@@ -178,7 +145,7 @@ export class IoSql {
 	 * @param samples
 	 */
 	public async writeHistory(samples: IoWriteCacheVal[]): Promise<Record<string, number>> {
-		await this.waitCache(0);
+		await this.waitCache();
 
 		// tblValues
 		const tblValues: Record<string, string[]> = {
@@ -201,8 +168,13 @@ export class IoSql {
 		const affectedRows: Record<string, number> = {};			// by tblName
 		for (const [ tblName, values ] of Object.entries(tblValues)) {
 			if (values.length > 0) {
-				const qryStr = `INSERT INTO iobroker.${tblName} (id,ts,val,ack,_from,q) VALUES ${values.join(',')} ON DUPLICATE KEY UPDATE val=val, ack=ack`;
-				const [ result ] = await this.conn().query<MySql.ResultSetHeader>(qryStr);
+				const qryStr = `
+					INSERT
+					INTO		iobroker.${tblName} (id,ts,val,ack,_from,q)
+					VALUES		${values.join(',')}
+					ON DUPLICATE KEY UPDATE val=val, ack=ack
+				`;
+				const [ result ] = await this.conn().query<mysql.ResultSetHeader>(qryStr);
 				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeHistory()', 'result', '', JSON.stringify( result, null, 4));
 				affectedRows[tblName] = result.affectedRows;
 			}
@@ -218,7 +190,7 @@ export class IoSql {
 	 * @returns
 	 */
 	public async delHistory(stateIds: string[], queryOpts: SqlQueryOpts): Promise<Record<string, number>> {
-		await this.waitCache(0);
+		await this.waitCache();
 
 		const dpIds = stateIds.map(stateId => this.datapoints[stateId]?.id).filter(dpId => (dpId !== undefined));
 		const affectedRows: Record<string, number> = {};		// by tblName
@@ -230,8 +202,12 @@ export class IoSql {
 			const datapoints = this.getDatapoints(stateIds);					// { tblName: [ dpId, dpId, ...],  ... }
 			for (const [ tblName, dpIds ] of Object.entries(datapoints)) {		// val AS 'val_number', 'val_string', 'val_bool'
 				const and_cond = this.query_and_cond(queryOpts);
-				const qryStr = `DELETE FROM iobroker.${tblName} WHERE id IN(${dpIds.join(',')}) ${and_cond}`;
-				const [ result ] = await this.conn().query<MySql.ResultSetHeader>(qryStr);
+				const qryStr = `
+					DELETE
+					FROM		iobroker.${tblName}
+					WHERE		id IN(${dpIds.join(',')}) ${and_cond}
+				`;
+				const [ result ] = await this.conn().query<mysql.ResultSetHeader>(qryStr);
 				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'delHistory()', 'result', '', JSON.stringify( result, null, 4));
 				affectedRows[tblName] = result.affectedRows;
 			}
@@ -330,20 +306,20 @@ export class IoSql {
 	 *
 	 */
 	private async loadDatapoints() {
-		const qryStr = 'SELECT name, id, type from iobroker.datapoints ORDER BY name';
-		interface Datapoint extends MySql.RowDataPacket {
+		interface Datapoint extends mysql.RowDataPacket {
 			name:	string,
 			id:		number,
 			type:	number,
 		}
+		const qryStr = 'SELECT name, id, type from iobroker.datapoints ORDER BY name';
 		const [ rows ] = await this.conn().query<Datapoint[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'loadDatapoints()', 'rows',   '', JSON.stringify( rows,   null, 4));
 
-		for (const row of rows) {					// row: { name: string, id: number, type: number }
+		for (const row of rows) {						// row: { name: string, id: number, type: number }
 			const stateId	= row.name;
 			const dpId		= row.id;
-			const dpTypeNb	= row.type;				// 0, 1, 2
-			const tblName	= TableName[dpTypeNb];	//
+			const dpTypeNb	= row.type;					// 0, 1, 2
+			const tblName	= TableName[dpTypeNb];		//
 			if (typeof tblName === 'string') {
 				this.datapoints[stateId] = {
 					'tblName':		tblName,
@@ -397,16 +373,17 @@ export class IoSql {
 	 *
 	 * @param maxLevel
 	 */
-	private async waitCache(maxLevel: number): Promise<void> {
+	public async waitCache(maxLevel = 0): Promise<void> {
+		const WaitMs = 250;
 		let cacheLevel: number;
 		let cacheWait = false;
 		do {
 			cacheLevel = await this.cacheLevel();
 			if (cacheLevel > maxLevel) {
-				this.logf.warn('%-15s %-15s %-10s %4.1f %% >  %4.1f %%; retrying in 1s ...', this.constructor.name, 'waitCache()', 'cacheLevel', cacheLevel*100, maxLevel*100);
+				this.logf.warn('%-15s %-15s %-10s %4.1f %% >  %4.1f %%; retrying in %d ms ...', this.constructor.name, 'waitCache()', 'cacheLevel', cacheLevel*100, maxLevel*100, WaitMs);
 				cacheWait = true;
 				await new Promise((res, _rej) => {				// wait
-					this.timer = setTimeout(res, 1000);			// 1 s
+					this.timer = setTimeout(res, WaitMs);		// WaitMs
 				});
 			}
 		} while (cacheLevel > maxLevel);
@@ -428,7 +405,7 @@ export class IoSql {
 		//FIXME 'bigIntAsNumber':	true
 		const qryStr = `SHOW STATUS LIKE 'Aria_pagecache_blocks_%';`;
 		type CacheStatusVar = 'Aria_pagecache_blocks_not_flushed' | 'Aria_pagecache_blocks_unused' | 'Aria_pagecache_blocks_used';
-		interface CacheStatusRow extends MySql.RowDataPacket {
+		interface CacheStatusRow extends mysql.RowDataPacket {
 			Variable_name:		CacheStatusVar,
 			Value:				string,
 		}

@@ -57,7 +57,7 @@ export class IoStates {
 	 * @param stateId
 	 * @returns
 	 */
-	public static async load<T extends ValType>(stateId: string, val: T): Promise<IoState<T> | null> {
+	public static async load<T extends ValType>(stateId: string): Promise<IoState<T> | null> {
 		const adapter = IoAdapter.this;
 
 		// return existing state
@@ -66,22 +66,34 @@ export class IoStates {
 			return IoStates.allStates[stateId] as IoState<T>;
 		}
 
-		// return null if state object does not exists
-		const valObj = await adapter.readStateObject(stateId);
-		if (! valObj) {
+		// return null if state object does not exist
+		const stateObj = await adapter.readStateObject(stateId);
+		if (! stateObj) {
 			adapter.logf.error('%-15s %-15s %-10s %-50s', this.name, 'load()', 'missing', 'valObj '+stateId);
 			return null;
 		}
 
-		// return null if state does not exists
-		const valState = await adapter.readState(stateId);
-		if (! valState) {
+		// return null if state does not exist
+		const state = await adapter.readState(stateId);
+		if (! state) {
 			adapter.logf.error('%-15s %-15s %-10s %-50s', this.name, 'load()', 'missing', 'valState '+stateId);
+			return null;
+		} else if (state.val === null) {
+			adapter.logf.error('%-15s %-15s %-10s %-50s', this.name, 'load()', 'invalid', 'valState '+stateId);
+			return null;
+		}
+
+		// ensure val type is correct
+		let val: T | undefined;
+		try			{ val = state.val as T;	}
+		catch (e)	{ /* empty */			}
+		if (val === undefined  ||  typeof val !== typeof state.val  ||  typeof val !== stateObj.common.type) {
+			adapter.logf.error('%-15s %-15s %-10s %-50s %s', this.name, 'load()', 'type error', stateId, typeof state.val);
 			return null;
 		}
 
 		// return new IoState
-		const { name, write, unit } = valObj.common;
+		const { name, write, unit } = stateObj.common;
 		return new IoState<T>({
 			'stateId':		stateId,
 			'name':			(typeof name === 'string') ? name : name.en,
@@ -138,7 +150,7 @@ export class IoState<T extends ValType> extends IoStates {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valInit()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
-			this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valInit()', '',  this.stateId, dateStr(ts), valStr(val));
+			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valInit()', '',  this.stateId, dateStr(ts), valStr(val));
 			this.val			= val;			// latest val
 			this.ts				= ts;			// latest ts (always > 0)
 		}
@@ -201,26 +213,3 @@ export class IoState<T extends ValType> extends IoStates {
 		}
 	}
 }
-
-
-
-
-/**
- *
- * @param val
- * @returns
- */
-/*
-// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
-function isType<T>(val: unknown): val is T {
-	let tmp: T | undefined;
-	try {
-		tmp =  val as T;							// try to assign val to tmp: T
-		tmp = (val === tmp) ? tmp : undefined;		// check if tmp has been converted
-	} catch (err) {
-		// empty
-	}
-
-	return (tmp !== undefined);
-}
-*/
