@@ -150,18 +150,24 @@ export class IoAdapter extends Adapter {
 		// on stateChange
 		// ~~~~~~~~~~~~~~
 		this.on('stateChange', (stateId: string, stateChange: ioBroker.State | null | undefined) => {
-			void this.runAsync(async () => {		// don't await here; handle state changes one-by-one!
-				if (stateChange) {
-					const { val, ack, ts } = stateChange;
-					if (val === null) {
-						this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'val null', stateId);
-					} else {
-						await this.onChange(stateId, { val, ack, ts });		// dont't await here to avoid mutex deadlock
-					}
+			if (stateChange) {
+				const { val, ack, ts } = stateChange;
+				if (val === null) {
+					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'val null', stateId);
+
 				} else {
-					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'deleted',  stateId);
+					try {
+						void this.mutex.runExclusive(async () => {
+							await this.onChange(stateId, { val, ack, ts });
+						});
+					} catch (err: unknown) {
+						this.logf.error('%-15s %-15s %-10s after %d ms\n%s', this.constructor.name, 'runExclusive()', 'timeout', AsyncTimeoutMs, (new Error('')).stack);
+					}
 				}
-			});
+
+			} else {
+				this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'deleted',  stateId);
+			}
 		});
 
 		// on unload
@@ -272,7 +278,7 @@ export class IoAdapter extends Adapter {
 				'write':	false,
 				'role':		'',
 			},
-			'native':		opts.native ?? {},			// Record<string, any>
+			'native':		opts.native ?? {},		// Record<string, any>
 		};
 		Object.assign(newStateObj.common, opts.common);
 
@@ -280,9 +286,10 @@ export class IoAdapter extends Adapter {
 		if (this.historyId) {
 			newStateObj.common.custom = newStateObj.common.custom ?? {};
 			newStateObj.common.custom[this.historyId] = Object.assign(
-				{ 'enabled': false },				// disabled by default
-				oldCustom[this.historyId],			// overwrite with old  history
-				opts.history,						// overwrite with opts.history
+				{ 'enabled': false },					// disabled by default
+				oldCustom[this.historyId],				// overwrite with old  history
+				opts.history,							// overwrite with opts.history
+				{ 'changesRelogInterval': 0 },			// overwrite
 			);
 		}
 
@@ -296,10 +303,10 @@ export class IoAdapter extends Adapter {
 			for (const diff of diffs) {
 				const { path, kind } = diff;
 				const pathStr = (path ?? ['']).map(val => String(val)).join('.');
-				if		(kind === 'N')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'added',   pathStr, JSON.stringify(diff.rhs));							}
-				else if (kind === 'D')  { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'deleted', pathStr, JSON.stringify(diff.lhs));							}
-				else if (kind === 'E')  { this.logf.info('%-15s %-15s %-10s %-50s %-20s --> %s',	this.constructor.name, 'writeStateObj()', 'edited',  pathStr, JSON.stringify(diff.lhs), JSON.stringify(diff.rhs));	}
-				else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s',				this.constructor.name, 'writeStateObj()', 'changed', pathStr, JSON.stringify(diff.item));							}
+				if		(kind === 'N')  { this.logf.info('%-15s %-15s %-10s %-50s %s: %s',			this.constructor.name, 'writeStateObj()', 'added',   stateId, pathStr, JSON.stringify(diff.rhs));							}
+				else if (kind === 'D')  { this.logf.info('%-15s %-15s %-10s %-50s %s: %s',			this.constructor.name, 'writeStateObj()', 'deleted', stateId, pathStr, JSON.stringify(diff.lhs));							}
+				else if (kind === 'E')  { this.logf.info('%-15s %-15s %-10s %-50s %s: %s -> %s',	this.constructor.name, 'writeStateObj()', 'edited',  stateId, pathStr, JSON.stringify(diff.lhs), JSON.stringify(diff.rhs));	}
+				else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s: %s',			this.constructor.name, 'writeStateObj()', 'changed', stateId, pathStr, JSON.stringify(diff.item));							}
 			}
 
 			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
@@ -432,7 +439,7 @@ export class IoAdapter extends Adapter {
 	 */
 	public setTimeoutAsync(cb: () => Promise<void>, ms: number): ioBroker.Timeout {
 		return this.setTimeout(() => {
-			void this.runAsync(async () => {
+			void this.mutex.runExclusive(async () => {
 				await cb();
 			});
 		}, ms) ?? null;
@@ -446,26 +453,9 @@ export class IoAdapter extends Adapter {
 	 */
 	public setIntervalAsync(cb: () => Promise<void>, ms: number): ioBroker.Interval {
 		return this.setInterval(() => {
-			void this.runAsync(async () => {
+			void this.mutex.runExclusive(async () => {
 				await cb();
 			});
 		}, ms) ?? null;
-	}
-
-
-	/**
-	 *
-	 * @param cb
-	 * @returns
-	 */
-	private async runAsync<T>(cb: () => Promise<T>): Promise<T> {
-		// used it in all iobroker event handlers and timer handlers
-		try {
-			return await this.mutex.runExclusive(cb);
-
-		} catch (err: unknown) {
-			this.logf.error('%-15s %-15s %-10s after %d ms\n%s', this.constructor.name, 'runExclusive()', 'timeout', AsyncTimeoutMs, (new Error('')).stack);
-			return cb();
-		}
 	}
 }

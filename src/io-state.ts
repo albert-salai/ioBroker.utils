@@ -13,9 +13,29 @@ type WriteState	= (state: AnyState, val: ValType) => Promise<void>;
 // IoState
 // ~~~~~~~
 export class IoStates {
-	public static readonly	allStates:	Record<string, AnyState>		= {};		// by stateId
-	public static			write:		WriteState						= (): Promise<void> => Promise.resolve();
-	protected readonly		logf										= IoAdapter.logf;
+	public static readonly	allStates:		Record<string, AnyState> = {};		// by stateId
+	public static			write:			WriteState = (): Promise<void> => Promise.resolve();
+	protected	readonly	logf			= IoAdapter.logf;
+	public		readonly	stateId:		string;
+	public		readonly	name:			string;
+	public		readonly	unit:			string;
+	public		readonly	writable:		boolean;
+	public					ts												= 0;
+	public					logType:		'none' | 'changed' | 'write'	= 'none';
+	public		readonly	inputFor:		IoOperator[]	= [];		// 'this' state is input   for  inputFor   operators
+	public		readonly	sourceFor:		IoOperator[]	= [];		// 'this' state is source  for  sourceFor  operators
+	public		readonly	outputFrom:		IoOperator[]	= [];		// 'this' state is output  from outputFrom operators
+
+	/**
+	 *
+	 * @param param0
+	 */
+	constructor({ stateId, name, unit, write }: { stateId: string, name: string, unit: string, write: boolean }) {
+		this.stateId	= stateId;
+		this.name		= name;
+		this.unit		= unit;
+		this.writable	= write;
+	}
 
 	/**
 	 *
@@ -110,34 +130,18 @@ export class IoStates {
 // IoState
 // ~~~~~~~
 export class IoState<T extends ValType> extends IoStates {
-	public	readonly	stateId:		string;
-	public	readonly	name:			string;
-	public	readonly	unit:			string;
-	public	readonly	writable:		boolean;
-	public				val:			T;
-	public				ts:				number;
-	public				logType:		'none' | 'changed' | 'write';
-
-	public	readonly	inputFor:		IoOperator[]		= [];			// 'this' state is input   for  inputFor   operators
-	public	readonly	outputFrom:		IoOperator[]		= [];			// 'this' state is output  from outputFrom operators
+	public val:		T;
 
 	constructor({ stateId, name, unit, write, val }: {
-		stateId:		string,
-		name:			string,
-		unit:			string,
-		write:			boolean,
-		val:			T,
+		stateId:	string,
+		name:		string,
+		unit:		string,
+		write:		boolean,
+		val:		T,
 	}) {
-		super();
-		this.stateId		= stateId;
-		this.name			= name;
-		this.unit			= unit;
-		this.writable		= write;
-		this.val			= val;
-		this.ts				= 0;
-		this.logType		= 'none';
-
+		super({ stateId, name, unit, write });
 		IoStates.allStates[stateId] = this;
+		this.val = val;
 	}
 
 	/**
@@ -145,14 +149,14 @@ export class IoState<T extends ValType> extends IoStates {
 	 * @param val
 	 * @param ts
 	 */
-	public valInit(val: T, ts: number): void {
+	public init(val: T, ts: number): void {
 		if (ts <= 0) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valInit()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
-			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valInit()', '',  this.stateId, dateStr(ts), valStr(val));
-			this.val			= val;			// latest val
-			this.ts				= ts;			// latest ts (always > 0)
+			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', '',  this.stateId, dateStr(ts), valStr(val));
+			this.val	= val;		// latest val
+			this.ts		= ts;		// latest ts (always > 0)
 		}
 	}
 
@@ -161,13 +165,13 @@ export class IoState<T extends ValType> extends IoStates {
 	 * @param val
 	 * @param ts
 	 */
-	public async valSet(val: T, ts: number): Promise<void> {		// also called vom history
+	public async update(val: T, ts: number): Promise<void> {		// also called vom history
 		if (ts <= 0) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valSet()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'update()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 			return;
 
 		} else if (IoOperator.isOnline()) {
-			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'valSet()', '', this.stateId, dateStr(ts), valStr(val));
+			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'update()', '', this.stateId, dateStr(ts), valStr(val));
 		}
 
 		// set val, ts, lastChange, valChangeTs

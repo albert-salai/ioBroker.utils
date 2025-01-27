@@ -6,12 +6,12 @@ import { AnyState }							from './io-state';
 // IoOperator
 // ~~~~~~~~~~
 export abstract class IoOperator {
-	private static				online							= true;
-	private						initialized						= false;
-	public			readonly	inputs:							readonly AnyState[];
-	protected		readonly	outputs:						readonly AnyState[];
-	protected		readonly	others:							readonly AnyState[];
-	protected		readonly	logf							= IoAdapter.logf;
+	private static				online								= true;
+	private						initialized							= false;
+	protected		readonly	logf								= IoAdapter.logf;
+	protected		readonly	sources:	readonly AnyState[];	// including inputs
+	public			readonly	inputs:		readonly AnyState[];	// will trigger execute()
+	protected		readonly	outputs:	readonly AnyState[];
 
 	// IoOperator.setOnline(), IoOperator.isOnline()
 	public static setOnline(isOnline: boolean): void	{ IoOperator.online = isOnline;	}
@@ -25,13 +25,14 @@ export abstract class IoOperator {
 	 */
 	constructor(inputs: readonly AnyState[], outputs: readonly AnyState[], others: readonly AnyState[]) {
 		this.logf		= IoAdapter.logf;
-		this.others		= others;
+		this.sources	= others.concat(inputs);
 		this.inputs		= inputs;
 		this.outputs	= outputs;
 
 		// register 'this' operator to its input and output states
-		for (const output  of this.outputs )	{ output .outputFrom.push(this ); }
-		for (const input   of this.inputs  )	{ input  .inputFor  .push(this ); }
+		for (const source of this.sources )	{ source .sourceFor .push(this ); }
+		for (const input  of this.inputs  )	{ input  .inputFor  .push(this ); }
+		for (const output of this.outputs )	{ output .outputFrom.push(this ); }
 	}
 
 	/**
@@ -67,7 +68,7 @@ export abstract class IoOperator {
 			*/
 
 			// ensure all state are initialized
-			const notInitialized = this.inputs.concat(this.outputs).concat(this.others).filter(state => (state.ts < 0));
+			const notInitialized = this.sources.concat(this.outputs).filter(state => (state.ts < 0));
 			if (notInitialized.length > 0) {
 				for (const state of notInitialized) {
 					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'no init', state.stateId,  dateStr(state.ts ), valStr(state.val ));
