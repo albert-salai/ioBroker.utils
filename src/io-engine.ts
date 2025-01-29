@@ -35,12 +35,14 @@ export class IoEngine {
 
 	/**
 	 *
+	 * @param historyDays
 	 */
 	public async start(historyDays: number): Promise<void> {
-		const adapter = this.adapter;
+		const adapter	= this.adapter;
+		const allStates	= Object.values(IoStates.allStates).sort(sortBy('stateId'));
 
 		// create own folder objects
-		await this.add_folders();
+		await this.add_folders(allStates);
 
 		// start_history() or start_online()
 		const useHistory = (historyDays > 0) ? await this.sql_connect() : false;
@@ -52,12 +54,12 @@ export class IoEngine {
 
 			// process history
 			IoOperator.setOnline(false);
-			await this.start_history(historyDays);
+			await this.start_history(historyDays, allStates);
 			await this.sql.onUnload();
 			IoOperator.setOnline(true);
 
 		} else {
-			await this.start_online();
+			await this.start_online(allStates);
 		}
 
 		// IoState.write()
@@ -70,8 +72,7 @@ export class IoEngine {
 			await adapter.writeState(ioState.stateId, { val, ack, ts });		// will call subscribed ack change handler
 		};
 
-		// subscribe iobroker state changes
-		const allStates = Object.values(IoStates.allStates).sort(sortBy('stateId'));
+		// subscribe iobroker ack state changes
 		for (const ioState of allStates) {
 			await adapter.subscribe({ 'stateId': ioState.stateId, 'ack': true, 'cb': async (state: StateChange) => {
 				if (ioState.logType === 'changed'  &&  state.val !== ioState.val) {
@@ -88,15 +89,15 @@ export class IoEngine {
 
 	/**
 	 *
+	 * @param ioStates
 	 */
-	public async start_online(): Promise<void> {
+	public async start_online(ioStates: AnyState[]): Promise<void> {
 		this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'start_online()', '', '...');
 
 		// init Timer
 		Timer.init();
 
 		// init ioStates
-		const ioStates = Object.values(IoStates.allStates).sort(sortBy('stateId'));
 		for (const ioState of ioStates) {
 			const state = await this.adapter.readState(ioState.stateId);
 			if (state  &&  state.val !== null) {
@@ -109,8 +110,9 @@ export class IoEngine {
 	/**
 	 *
 	 * @param historyDays
+	 * @param allStates
 	 */
-	public async start_history(historyDays: number): Promise<void> {
+	public async start_history(historyDays: number, allStates: AnyState[]): Promise<void> {
 		const adapter = this.adapter;
 		this.logf.debug('%-15s %-15s %-10s %-50s %.1f days', this.constructor.name, 'start_history()', '', '...', historyDays);
 
@@ -128,26 +130,21 @@ export class IoEngine {
 		// IoStates: write()		-		called recursively
 		IoStates.write = this.hist_write.bind(this);
 
-		// srcStates, dstStates, skipped
-		const allStates = Object.values(IoStates.allStates).sort(sortBy('stateId'));
-		const srcStates: 		Record<string, AnyState>	= {};		// by stateId
-		const dstStates: 		Record<string, AnyState>	= {};		// by stateId
-		const skippedStates:	Record<string, AnyState>	= {};		// by stateId
-		for (const state of allStates) {
-			if (state.outputFrom.length > 0) {
-				if (state.writable)					{ srcStates[state.stateId]		= state; }		// writable  output
-				else								{ dstStates[state.stateId]		= state; }		// read-only output
-			}
-			else if (state.sourceFor.length > 0)	{ srcStates[state.stateId]		= state; }		// input but not output
-			else									{ skippedStates[state.stateId]	= state; }		// skipped
+		// srcStates, dstStates
+		const srcStates: Record<string, AnyState>	= {};		// by stateId
+		const dstStates: Record<string, AnyState>	= {};		// by stateId
+		for (const ioState of allStates) {
+			// isDst: read-only output
+			const isDst = (ioState.outputFrom.length > 0)  &&  (! ioState.writable);
+			if (isDst)	dstStates[ioState.stateId] = ioState;
+			else		srcStates[ioState.stateId] = ioState;
 		}
-		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'skipped',   JSON.stringify(Object.keys(skippedStates),	null, 4));
 		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'srcStates', JSON.stringify(Object.keys(srcStates), 		null, 4));
 		this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'hist_exec()', 'dstStates', JSON.stringify(Object.keys(dstStates),		null, 4));
 
 		// process history							// first flush shall delete from  'fromTs'
 		this.flushedUntilTs = (fromTs - 1);			// first flush will  delete after 'flushedUntilTs'
-		await this.hist_init(fromTs);
+		await this.hist_init(fromTs, allStates);
 		await this.hist_exec(fromTs, srcStates, dstStates);
 
 		// process pending OFFLINE timers
@@ -160,30 +157,21 @@ export class IoEngine {
 		IoOperator.setOnline(true);
 
 		// write read-only output ioState val to iobroker state
-		for (const ioState of Object.values(dstStates)) {
-			const state = await adapter.readState(ioState.stateId);
-			if (state  &&  state.val !== null  &&  state.val !== ioState.val) {
-				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'write', ioState.stateId, dateStr(ioState.ts), valStr(ioState.val));
-				await this.sql.delHistory([ ioState.stateId ], { 'from': ioState.ts, 'until': ioState.ts });			// avoid sql error for existing timestamp
-				await adapter.writeState(ioState.stateId, { 'val': ioState.val, 'ack': true, 'ts': ioState.ts });		// write state to iobroker
+		for (const dstState of Object.values(dstStates)) {
+			const state = await adapter.readState(dstState.stateId);
+			if (state  &&  state.val !== null  &&  state.val !== dstState.val) {
+				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'write', dstState.stateId, dateStr(dstState.ts), valStr(dstState.val));
+				await this.sql.delHistory([ dstState.stateId ], { 'from': dstState.ts, 'until': dstState.ts });			// avoid sql error for existing timestamp
+				await adapter.writeState(dstState.stateId, { 'val': dstState.val, 'ack': true, 'ts': dstState.ts });		// write state to iobroker
 			}
 		}
 
-		// init ioState with iobroker state val
-		for (const ioState of Object.values(skippedStates)) {
-			const state = await adapter.readState(ioState.stateId);
-			if (state  &&  state.val !== null  &&  state.val !== ioState.val) {
-				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'init', ioState.stateId, dateStr(state.ts), valStr(state.val));
-				ioState.init(state.val, state.ts);
-			}
-		}
-
-		// update input-only ioState if iobroker state changed
-		for (const ioState of Object.values(srcStates)) {
-			const state = await adapter.readState(ioState.stateId);
-			if (state  &&  state.val !== null  &&  state.val !== ioState.val) {
-				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'update', ioState.stateId, dateStr(state.ts), valStr(state.val));
-				await ioState.update(state.val, state.ts);
+		// update srcState if iobroker state val changed
+		for (const srcState of Object.values(srcStates)) {
+			const state = await adapter.readState(srcState.stateId);
+			if (state  &&  state.val !== null  &&  state.val !== srcState.val) {
+				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'update', srcState.stateId, dateStr(state.ts), valStr(state.val));
+				await srcState.update(state.val, state.ts);
 			}
 		}
 	}
@@ -192,42 +180,42 @@ export class IoEngine {
 	/**
 	 *
 	 * @param fromTs
+	 * @param ioStates
 	 */
-	private async hist_init(fromTs: number): Promise<void> {
+	private async hist_init(fromTs: number, ioStates: AnyState[]): Promise<void> {
 		this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'hist_init()', '', '...');
 		const sqlOpts = { 'ack': true, 'isNull': false };
 
-		const allStates = Object.values(IoStates.allStates).sort(sortBy('stateId'));
-		for (const State of allStates) {
+		for (const ioState of ioStates) {
 			let val: number | boolean | string;
 			let ts:  number;
-			const rows = await this.sql.readHistory([ State.stateId ], { 'before': fromTs, 'desc': true, 'limit': 1, ...sqlOpts });
+			const rows = await this.sql.readHistory([ ioState.stateId ], { 'before': fromTs, 'desc': true, 'limit': 1, ...sqlOpts });
 			if (rows[0]) {
 				ts  = rows[0].ts;
 				val = rows[0].val;
-				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'before',  State.stateId, dateStr(ts), valStr(val));
+				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'before',  ioState.stateId, dateStr(ts), valStr(val));
 			} else {
-				const rows = await this.sql.readHistory([ State.stateId ], { 'from': fromTs, 'limit': 1, ...sqlOpts });
+				const rows = await this.sql.readHistory([ ioState.stateId ], { 'from': fromTs, 'limit': 1, ...sqlOpts });
 				if (rows[0]) {
 					ts  = fromTs;
 					val = rows[0].val;
-					this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'after',  State.stateId, dateStr(ts), valStr(val));
+					this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'after',  ioState.stateId, dateStr(ts), valStr(val));
 				} else {
-					const state = await this.adapter.readState(State.stateId);
+					const state = await this.adapter.readState(ioState.stateId);
 					if (state  &&  state.val !== null) {
 						ts  = fromTs;
 						val = state.val;
-						this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'state',  State.stateId, dateStr(ts), valStr(val));
+						this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'state',  ioState.stateId, dateStr(ts), valStr(val));
 					} else {
-						throw new Error(`${this.constructor.name}: hist_init(): ${State.stateId}: not found`);
+						throw new Error(`${this.constructor.name}: hist_init(): ${ioState.stateId}: not found`);
 					}
 				}
 			}
 			if (ts <= 0) {
-				this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'ts invalid',  State.stateId, dateStr(State.ts), valStr(State.val));
+				this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'ts invalid',  ioState.stateId, dateStr(ioState.ts), valStr(ioState.val));
 				ts = fromTs;
 			}
-			State.init(val, ts);
+			ioState.init(val, ts);
 		}
 	}
 
@@ -235,6 +223,8 @@ export class IoEngine {
 	/**
 	 *
 	 * @param fromTs
+	 * @param srcStates
+	 * @param dstStates
 	 */
 	public async hist_exec(fromTs: number, srcStates: Record<string, AnyState>, dstStates: Record<string, AnyState>): Promise<void> {
 		// debug log missing history datapoints
@@ -400,7 +390,7 @@ export class IoEngine {
 	private hist_setTimer(opts: TimerOpts): Timer {
 		const timer = new Timer(opts);
 		this.histTimers.push(timer);
-		this.histTimers.sort(sortBy('expires'));
+		this.histTimers.sort(sortBy('expireTs'));
 		return timer;
 	}
 
@@ -416,7 +406,7 @@ export class IoEngine {
 			if (idx >= 0) {
 				this.histTimers.splice(idx, 1);
 			} else {
-				this.logf.error('%-15s %-15s %-10s %-50s %s\n%s', this.constructor.name, 'delTimer()', 'missing', '', dateStr(timer.expires), timer.toString());
+				this.logf.error('%-15s %-15s %-10s %-50s %s\n%s', this.constructor.name, 'delTimer()', 'missing', '', dateStr(timer.expireTs), timer.toString());
 			}
 		}
 		return null;
@@ -441,30 +431,31 @@ export class IoEngine {
 		while (this.histTimers[0]) {
 			// next timeout's timer
 			const timer = this.histTimers[0];				// (first) timer: { timeout, interval, expires, cb, ... }
-			if (timer.expires > nextNow) {
+			if (timer.expireTs > nextNow) {
 				break;										// all offline timers processed
 			}												// expires <= nextNow
 
 			// debug log
-			if (timer.expires < this.histNow) {				// histNow <= expires <= nextNow
-				this.logf.error('%-15s %-15s %-10s expires - histNow = %6d <  0 %-18s %s\n%s', this.constructor.name, 'hist_setNow()', 'error',	(timer.expires - this.histNow), '', dateStr(this.histNow), timer.toString());
+			if (timer.expireTs < this.histNow) {			// histNow <= expires <= nextNow
+				this.logf.error('%-15s %-15s %-10s expires - histNow = %6d <  0 %-18s %s\n%s', this.constructor.name, 'hist_setNow()', 'error',	(timer.expireTs - this.histNow), '', dateStr(this.histNow), timer.toString());
 			} else {
 				//this.logf.debug('%-15s %-15s %-10s expires - histNow = %6d >= 0 %-18s %s %s', this.constructor.name, 'hist_setNow()', '',		(timer.expires - this.histNow), '', dateStr(this.histNow), timer.name);
 			}
 
 			// set histNow, process timer timeout
-			this.histNow = timer.expires;					// histNow := expires <= nextNow
+			this.histNow = timer.expireTs;					// histNow := expires <= nextNow
 			await timer.cb();
 
-			// delete timer
-			if (timer.interval === null) {
-				this.histTimers.shift();
-
 			// update expires
-			} else {
-				timer.expires += timer.interval;
-				this.histTimers.sort(sortBy('expires'));
+			if (timer.intervalSecs !== null) {
+				timer.timeoutSecs    = null;
+				timer.expireTs += timer.intervalSecs;
+				this.histTimers.sort(sortBy('expireTs'));
 				//this.logf.debug('%-15s %-15s %-10s %-50s %s\n%s', this.constructor.name, 'hist_setNow()', 'repeating', 'interval', dateStr(Timer.getNow()), timer2json(histTimer));
+
+			// delete timer
+			} else {
+				this.histTimers.shift();
 			}
 		}
 
@@ -488,7 +479,7 @@ export class IoEngine {
 		// convert offline timer to online timer
 		for (const timer of this.histTimers) {
 			this.logf.debug('%-15s %-15s %-20s %-40s\n%s', this.constructor.name, 'hist_convertTimers()', '', 'switching timer from offline to online mode', timer.toString());
-			const { name, interval, expires, cb } = timer;
+			const { name, intervalSecs: interval, expireTs: expires, cb } = timer;
 			const timeout = expires - Timer.now();
 
 			// timeout
@@ -532,11 +523,12 @@ export class IoEngine {
 
 	/**
 	 *
+	 * @param ioStates
 	 */
-	private async add_folders(): Promise<void> {
+	private async add_folders(ioStates: AnyState[]): Promise<void> {
 		const folderIds: string[] = [];
 
-		for (const stateId of Object.keys(IoStates.allStates)) {
+		for (const stateId of ioStates.map(ioState => ioState.stateId)) {
 			if (stateId.startsWith(this.adapter.namespace)) {
 				const path = stateId.split('.').slice(0, -1);
 				if (path.length >= 3) {

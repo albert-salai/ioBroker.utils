@@ -25,9 +25,9 @@ export class Timer {
 	public static setTimer:		SetTimer				= _setTimer;
 	public static clearTimer:	ClearTimer				= _clearTimer;
 	public name:				string;
-	public timeout:				number | null;
-	public interval:			number | null;
-	public expires:				number;
+	public timeoutSecs:			number | null;
+	public intervalSecs:		number | null;
+	public expireTs:			number;
 	public timeoutId:			ioBroker.Timeout		= null;
 	public intervalId:			ioBroker.Interval		= null;
 	public cb:					TimerCb;
@@ -43,13 +43,13 @@ export class Timer {
 		if (opts.interval !== undefined  &&  opts.interval < 0) {
 			IoAdapter.logf.warn('%-15s %-15s %-10s interval %f < 0; set to 0', this.constructor.name, 'constructor()', '', opts.interval);
 		}
-		this.timeout	= (opts.timeout  === undefined) ? null : Math.max(0, opts.timeout );
-		this.interval	= (opts.interval === undefined) ? null : Math.max(0, opts.interval);
+		this.timeoutSecs	= (opts.timeout  === undefined) ? null : Math.max(0, opts.timeout );
+		this.intervalSecs	= (opts.interval === undefined) ? null : Math.max(0, opts.interval);
 
 		// expires
-		if		(this.timeout  !== null)	{ this.expires = Timer.now() + this.timeout;  }
-		else if (this.interval !== null)	{ this.expires = Timer.now() + this.interval; }
-		else								throw new Error(`${this.constructor.name}: constructor(): `);
+		if		(this.timeoutSecs  !== null)	{ this.expireTs = Timer.now() + this.timeoutSecs;  }
+		else if (this.intervalSecs !== null)	{ this.expireTs = Timer.now() + this.intervalSecs; }
+		else									throw new Error(`${this.constructor.name}: constructor(): `);
 	}
 
 
@@ -75,13 +75,13 @@ export class Timer {
 	 */
 	public toString(): string {
 		return JSON.stringify({
-			'name':			this.name,
-			'timeout_s':	(this.timeout    === null) ? null : Math.ceil(this.timeout /100)/10,
-			'interval_s':	(this.interval   === null) ? null : Math.ceil(this.interval/100)/10,
-			'expires':		dateStr(this.expires),
-			'timeoutId':	(this.timeoutId  === null) ? null : this.timeoutId.toString(),
-			'intervalId':	(this.intervalId === null) ? null : this.intervalId.toString(),
-			'cb':			`<${typeof this.cb}>`,
+			'name':				this.name,
+			'timeoutSecs':		(this.timeoutSecs  === null) ? null : Math.ceil(this.timeoutSecs /100)/10,
+			'intervalSecs':		(this.intervalSecs === null) ? null : Math.ceil(this.intervalSecs/100)/10,
+			'expireTs':			dateStr(this.expireTs),
+			'timeoutId':		(this.timeoutId  === null) ? null : this.timeoutId.toString(),
+			'intervalId':		(this.intervalId === null) ? null : this.intervalId.toString(),
+			'cb':				`<${typeof this.cb}>`,
 		}, null, 4);
 	}
 }
@@ -106,7 +106,7 @@ function _setTimer(opts: TimerOpts): Timer {
 	const timer		= new Timer(opts);
 
 	// start setTimeout()
-	if (timer.timeout !== null) {
+	if (timer.timeoutSecs !== null) {
 		//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 1', timer.name, dateStr(Timer.getNow()));
 		timer.timeoutId = adapter.setTimeoutAsync(async () => {
 			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 1', timer.name, dateStr(Timer.getNow()));
@@ -116,22 +116,22 @@ function _setTimer(opts: TimerOpts): Timer {
 			timer.timeoutId = null;
 
 			// start setInterval()
-			if (timer.interval !== null) {
+			if (timer.intervalSecs !== null) {
 				//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 2', timer.name, dateStr(Timer.getNow()));
 				timer.intervalId = adapter.setIntervalAsync(async () => {
 					//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 2', timer.name, dateStr(Timer.getNow()));
 					await timer.cb();			// may call _clearTimer()
-				}, timer.interval) ?? null;
+				}, timer.intervalSecs) ?? null;
 			}
-		}, timer.timeout) ?? null;
+		}, timer.timeoutSecs) ?? null;
 
 	// start setInterval()
-	} else if (timer.interval !== null) {
+	} else if (timer.intervalSecs !== null) {
 		//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 3', timer.name, dateStr(Timer.getNow()));
 		timer.intervalId = adapter.setIntervalAsync(async () => {
 			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 3', timer.name, dateStr(Timer.getNow()));
 			await timer.cb();					// may call _clearTimer()
-		}, timer.interval) ?? null;
+		}, timer.intervalSecs) ?? null;
 	}
 
 	return timer;

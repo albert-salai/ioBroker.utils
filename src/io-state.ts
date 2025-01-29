@@ -23,7 +23,6 @@ export class IoStates {
 	public					ts												= 0;
 	public					logType:		'none' | 'changed' | 'write'	= 'none';
 	public		readonly	inputFor:		IoOperator[]	= [];		// 'this' state is input   for  inputFor   operators
-	public		readonly	sourceFor:		IoOperator[]	= [];		// 'this' state is source  for  sourceFor  operators
 	public		readonly	outputFrom:		IoOperator[]	= [];		// 'this' state is output  from outputFrom operators
 
 	/**
@@ -64,10 +63,10 @@ export class IoStates {
 		// create IoState
 		return new IoState<T>({
 			stateId,
-			'name':				name,
-			'write':			write ?? false,
-			'unit':				unit  ?? '',
-			'val':				def,
+			'name':			name,
+			'write':		write ?? false,
+			'unit':			unit  ?? '',
+			'val':			def,
 		});
 	}
 

@@ -284,13 +284,17 @@ export class IoAdapter extends Adapter {
 
 		// newStateObj history
 		if (this.historyId) {
-			newStateObj.common.custom = newStateObj.common.custom ?? {};
-			newStateObj.common.custom[this.historyId] = Object.assign(
-				{ 'enabled': false },					// disabled by default
-				oldCustom[this.historyId],				// overwrite with old  history
-				opts.history,							// overwrite with opts.history
-				{ 'changesRelogInterval': 0 },			// overwrite
-			);
+			if (opts.history?.enabled) {
+				newStateObj.common.custom = newStateObj.common.custom ?? {};
+				newStateObj.common.custom[this.historyId] = Object.assign(
+					{},
+					oldCustom[this.historyId],				// overwrite with old  history
+					opts.history,							// overwrite with opts.history
+					{ 'changesRelogInterval': 0 },			// overwrite
+				);
+			} else if (newStateObj.common.custom?.[this.historyId]) {
+				newStateObj.common.custom[this.historyId] = null;
+			}
 		}
 
 		// create new or update existing object
@@ -316,6 +320,7 @@ export class IoAdapter extends Adapter {
 				if (stateObj?.type !== 'state') {
 					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);
 				}
+				this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'stateObj', stateId, JSON.stringify(newStateObj, null, 4));
 				newStateObj = stateObj;
 			}
 		}
