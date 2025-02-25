@@ -3,6 +3,7 @@ import { Adapter,	AdapterOptions	}			from '@iobroker/adapter-core';
 import { Mutex, withTimeout }					from 'async-mutex';
 import { sprintf }								from 'sprintf-js';
 import { diff as deepDiff }						from 'deep-diff';
+import { Timer } 								from './io-timer';
 
 // see also
 //		https://github.com/ioBroker/ioBroker/wiki/Adapter-Development-Documentation#structure-of-io-packagejson
@@ -12,8 +13,8 @@ import { diff as deepDiff }						from 'deep-diff';
 const AsyncTimeoutMs = 1000*10;			// 10 seconds
 
 
-// dateStr(ts)
-export function dateStr(ts: number = Date.now()): string {
+// dateStr(ts)		-		returning string at local time
+export function dateStr(ts: number = Timer.now()): string {
 	const  d = new Date(ts);
 	return sprintf('%02d.%02d.%04d %02d:%02d:%02d', d.getDate(), d.getMonth() + 1, d.getFullYear(), d.getHours(), d.getMinutes(), d.getSeconds());
 }
@@ -136,7 +137,7 @@ export class IoAdapter extends Adapter {
 
 				// save config and restart adapter
 				if (this.saveConfig) {
-					await this.updateConfig(this.config);			// don't await here; will restart adapter
+					await this.updateConfig(this.config);			// will restart adapter
 					return;
 				}
 
@@ -257,7 +258,7 @@ export class IoAdapter extends Adapter {
 	 * @param common
 	 */
 	//
-	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.SettableStateObject> {
+	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.StateObject> {
 		// oldObj
 		const oldStateObj = await this.getForeignObjectAsync(stateId);
 		if (oldStateObj  &&  oldStateObj.type !== 'state') {
@@ -268,7 +269,7 @@ export class IoAdapter extends Adapter {
 		const oldCustom: Record<string, unknown> = oldStateObj?.common.custom ?? {};
 
 		// newStateObj
-		let newStateObj: ioBroker.SettableStateObject = {
+		const newStateObj: ioBroker.SettableStateObject = {
 			'type':			'state',
 			'common': {
 				'name':		opts.common.name,
@@ -301,6 +302,11 @@ export class IoAdapter extends Adapter {
 		if (! oldStateObj) {
 			this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'newObj', stateId, JSON.stringify(newStateObj, null, 4));
 			await this.setForeignObject(stateId, newStateObj);
+			const stateObj = await this.getForeignObjectAsync(stateId);
+			if (! stateObj  ||  stateObj.type !== 'state') {
+				throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: misssing`);
+			}
+			return stateObj;		// return ioBroker.StateObject
 
 		} else {
 			const diffs = deepDiff(oldStateObj.common, newStateObj.common) ?? [];
@@ -320,13 +326,13 @@ export class IoAdapter extends Adapter {
 				if (stateObj?.type !== 'state') {
 					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);
 				}
-				this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'stateObj', stateId, JSON.stringify(newStateObj, null, 4));
-				newStateObj = stateObj;
+				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'stateObj', stateId, JSON.stringify(newStateObj, null, 4));
+				return stateObj;		// return ioBroker.StateObject
+
+			} else {
+				return oldStateObj;
 			}
 		}
-
-		// return ioBroker.SettableStateObject
-		return newStateObj;
 	}
 
 

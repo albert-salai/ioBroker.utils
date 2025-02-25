@@ -54,10 +54,8 @@ export class IoSql {
 
 	/**
 	 *
-	 * @param opts
-	 * @returns
 	 */
-	private conn(): SqlConn {
+	private get conn(): SqlConn {
 		if (this.sqlConn === undefined) {
 			throw new Error(`${this.constructor.name}: conn(): connection not established`);
 		}
@@ -90,7 +88,7 @@ export class IoSql {
 		if (this.timer !== undefined) {
 			clearTimeout(this.timer);
 		}
-		await this.conn().end();
+		await this.conn.end();
 	}
 
 	/**
@@ -126,7 +124,7 @@ export class IoSql {
 		const qryStr = tblSelects.join(' UNION ALL ') + ` ORDER BY ${order_by} ${LIMIT}`;
 
 		interface HistoryRow extends mysql.RowDataPacket, SqlHistoryRow {}
-		const [ rows ] = await this.conn().query<HistoryRow[]>(qryStr);
+		const [ rows ] = await this.conn.query<HistoryRow[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'readHistory()', 'rows', '', JSON.stringify(rows, null, 4));
 
 		rows.forEach((row) => {
@@ -174,7 +172,11 @@ export class IoSql {
 					VALUES		${values.join(',')}
 					ON DUPLICATE KEY UPDATE val=val, ack=ack
 				`;
-				const [ result ] = await this.conn().query<mysql.ResultSetHeader>(qryStr);
+				//await this.conn.beginTransaction();							// workaround to ensure transaction is finished
+				const [ result ] = await this.conn.query<mysql.ResultSetHeader>(qryStr);
+				//await this.conn.commit();									// workaround to ensure transaction is finished
+				//await new Promise((res, _rej) => setImmediate(res));		// workaround to ensure transaction is finished
+
 				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeHistory()', 'result', '', JSON.stringify( result, null, 4));
 				affectedRows[tblName] = result.affectedRows;
 			}
@@ -207,7 +209,11 @@ export class IoSql {
 					FROM		iobroker.${tblName}
 					WHERE		id IN(${dpIds.join(',')}) ${and_cond}
 				`;
-				const [ result ] = await this.conn().query<mysql.ResultSetHeader>(qryStr);
+				//await this.conn.beginTransaction();							// workaround to ensure transaction is finished
+				const [ result ] = await this.conn.query<mysql.ResultSetHeader>(qryStr);
+				//await this.conn.commit();									// workaround to ensure transaction is finished
+				//await new Promise((res, _rej) => setImmediate(res));		// workaround to ensure transaction is finished
+
 				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'delHistory()', 'result', '', JSON.stringify( result, null, 4));
 				affectedRows[tblName] = result.affectedRows;
 			}
@@ -223,7 +229,7 @@ export class IoSql {
 		const tables = TableName.map(tableName => `iobroker.${tableName}`).join(', ');
 		this.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'optimizeTablesAsync()', '.....', `optimizing ${tables}`);
 
-		const [ result ] = await this.conn().query(`OPTIMIZE TABLE ${tables} WAIT 120`);
+		const [ result ] = await this.conn.query(`OPTIMIZE TABLE ${tables} WAIT 120`);
 		this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'optimizeTablesAsync()', 'result', '', JSON.stringify( result, null, 4));
 
 		this.logf.debug('%-15s %-15s %-10s', this.constructor.name, 'optimizeTablesAsync()', 'done.');
@@ -312,7 +318,7 @@ export class IoSql {
 			type:	number,
 		}
 		const qryStr = 'SELECT name, id, type from iobroker.datapoints ORDER BY name';
-		const [ rows ] = await this.conn().query<Datapoint[]>(qryStr);
+		const [ rows ] = await this.conn.query<Datapoint[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'loadDatapoints()', 'rows',   '', JSON.stringify( rows,   null, 4));
 
 		for (const row of rows) {						// row: { name: string, id: number, type: number }
@@ -409,7 +415,7 @@ export class IoSql {
 			Variable_name:		CacheStatusVar,
 			Value:				string,
 		}
-		const [ result ] = await this.conn().query<CacheStatusRow[]>(qryStr);
+		const [ result ] = await this.conn.query<CacheStatusRow[]>(qryStr);
 		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'cacheLevel()', 'result', '', JSON.stringify( result, null, 4));
 
 		// cacheBlocks

@@ -1,5 +1,6 @@
 import { IoAdapter, dateStr, valStr }		from './io-adapter';
 import { AnyState }							from './io-state';
+import { Timer }							from './io-timer';
 
 
 // ~~~~~~~~~~
@@ -35,8 +36,8 @@ export abstract class IoOperator {
 	}
 
 	/**
-	 *
-	 * @returns
+	 * inititalize operator - called before execute() until operator is not yet initialized
+	 * @returns true if operator is initialized
 	 */
 	protected init(): Promise<boolean> | boolean {		// called before first execute()
 		return true;									// resolves to true if initialization is complete
@@ -66,13 +67,20 @@ export abstract class IoOperator {
 			this.others .forEach((other,  idx) => { this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', `other [${idx.toString()}]`, other .stateId, dateStr(other .ts), valStr(other .val)); });
 			*/
 
-			// ensure all state are initialized
+			// ensure all state are initialized with ts > 0
 			const notInitialized = this.inputs.concat(this.outputs, this.others).filter(state => (state.ts <= 0));
 			if (notInitialized.length > 0) {
 				for (const state of notInitialized) {
 					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'no init', state.stateId,  dateStr(state.ts ), valStr(state.val ));
 				}
 				throw new Error(`${this.constructor.name}: exec(): some states not initilized`);
+			}
+
+			// debug warn
+			for (const input of this.inputs) {
+				if (input.ts > Timer.now()) {
+					this.logf.warn('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'invalid ts', input.stateId, dateStr(input.ts), valStr(input.val));
+				}
 			}
 
 			this.initialized = await this.init();

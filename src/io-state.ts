@@ -1,6 +1,5 @@
 import { IoAdapter, ValType, IoStateOpts, dateStr, valStr }		from './io-adapter';
 import { IoOperator }		from './io-operator';
-import { Timer }			from './io-timer';
 
 
 // AnyState			-		IoState<number | boolean | string>
@@ -49,7 +48,7 @@ export class IoStates {
 		}
 
 		const { name, write, unit, def } = valObj.common;
-		Object.assign(valObj.common, { type: typeof def });
+		//Object.assign(valObj.common, { type: typeof def });		FIXME: needed?
 
 		// create state object
 		await IoAdapter.this.writeStateObj(stateId, valObj);
@@ -191,13 +190,12 @@ export class IoState<T extends ValType> extends IoStates {
 	 */
 	public async write(val: ValType): Promise<void> {
 		if ((typeof val === 'number'  &&  ! Number.isFinite(val))) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', '', this.stateId, dateStr(Timer.now()), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', '', this.stateId, dateStr(), valStr(val));
 
 		} else {
 			await IoState.write(this, val);
 		}
 	}
-
 
 	/**
 	 *
