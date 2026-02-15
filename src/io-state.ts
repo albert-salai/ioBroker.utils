@@ -28,7 +28,12 @@ export class IoStates {
 	 *
 	 * @param param0
 	 */
-	constructor({ stateId, name, unit, write }: { stateId: string, name: string, unit: string, write: boolean }) {
+	constructor({ stateId, name, unit, write }: {
+		stateId: string,
+		name:	string,
+		unit:	string,
+		write:	boolean,
+	}) {
 		this.stateId	= stateId;
 		this.name		= name;
 		this.unit		= unit;
@@ -47,14 +52,17 @@ export class IoStates {
 			throw new Error(`${this.name}: create(): ${stateId} already created`);
 		}
 
+		// name, write, unit, def
 		const { name, write, unit, def } = valObj.common;
-		//Object.assign(valObj.common, { type: typeof def });		FIXME: needed?
 
 		// create state object
 		await IoAdapter.this.writeStateObj(stateId, valObj);
 
 		// write default state val
-		const valState = await IoAdapter.this.readState(stateId) ?? { val: null };
+		const valState = await IoAdapter.this.readState(stateId);
+		if (valState === null) {
+			throw new Error(`${this.name}: create(): ${stateId} state undefined`);
+		}
 		if (valState.val === null) {
 			await IoAdapter.this.writeState(stateId, { 'val': def, 'ack': true });
 		}
@@ -69,7 +77,6 @@ export class IoStates {
 		});
 	}
 
-
 	/**
 	 *
 	 * @param stateId
@@ -77,6 +84,11 @@ export class IoStates {
 	 */
 	public static async load<T extends ValType>(stateId: string): Promise<IoState<T> | null> {
 		const adapter = IoAdapter.this;
+
+		if (! stateId) {
+			adapter.logf.warn('%-15s %-15s %-10s %-50s\n%s', this.name, 'load()', 'stateId', 'empty', (new Error()).stack ?? '');
+			return null;
+		}
 
 		// return existing state
 		if (IoStates.allStates[stateId]) {
@@ -197,20 +209,45 @@ export class IoState<T extends ValType> extends IoStates {
 		}
 	}
 
+
+	/**
+	 *
+	 * @param options
+	 * @returns
+	 */
+	public async getHistory(options: { start?: number, end?: number, ack?: boolean, limit?: number }): Promise<{ ts: number, val: T }[]> {
+		// see https://github.com/ioBroker/ioBroker.sql/blob/master/main.js#L2302
+		if (IoAdapter.this.historyId) {
+			const history = await IoAdapter.this.sendToAsync(IoAdapter.this.historyId, 'getHistory', {
+				'id':			this.stateId,
+				'options':		Object.assign({
+									'aggregate':	'none',
+									'ignoreNull':	true,
+								}, options),
+			}) as {result: {ts: number, val: T}[]} | undefined;
+			return history?.result ?? [];
+
+		} else {
+			return [];
+		}
+	}
+
+
 	/**
 	 *
 	 * @returns
 	 */
-	toJSON(): { stateId: string, name: string, unit: string, writable: boolean, val: string, ts: string, inputFor: string[], outputFrom: string[] } {
+	toJSON(): { stateId: string, name: string, unit: string, writable: boolean, ts: string, logType: string, inputFor: string[], outputFrom: string[], val: string } {
 		return {
 			'stateId':		this.stateId,
 			'name':			this.name,
 			'unit':			this.unit,
 			'writable':		this.writable,
-			'val':			JSON.stringify(this.val),
 			'ts':			dateStr(this.ts),
+			'val':			valStr(this.val),				// from IoState<T> class
 			'inputFor':		this.inputFor  .map(op => `Operator<${op.constructor.name}>`),
 			'outputFrom':	this.outputFrom.map(op => `Operator<${op.constructor.name}>`),
+			'logType':		this.logType,
 		}
 	}
 }

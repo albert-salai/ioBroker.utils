@@ -10,7 +10,7 @@ import { Timer } 								from './io-timer';
 //		https://github.com/ioBroker/ioBroker.js-controller/blob/master/packages/adapter/src/lib/adapter/adapter.ts
 
 // AsyncTimeoutMs
-const AsyncTimeoutMs = 1000*10;			// 10 seconds
+const AsyncTimeoutMs = 1000*20;			// 20 seconds
 
 
 // dateStr(ts)		-		returning string at local time
@@ -42,23 +42,23 @@ interface StateChangeOpts {
 }
 
 // WriteStateObj
-export interface HistoryObj {						// DEFAULT
-	'enabled'?:						boolean,		// false
-	'changesOnly'?:					boolean,		// false		Record changes only
+export interface HistoryOpts {						// DEFAULT
+	'enabled'?:						boolean,		// n/a
+	'storageType'?:					string,			// ''
+	'counter'?:						boolean,		// false		Counter
+	'aliasId'?:						string,			// ''
 	'debounceTime'?:				number,			// 0			Only logs the value if it stays unchanged for X ms
 	'blockTime'?:					number,			// 0			Ignore all new values for X ms after last logged value
+	'changesOnly'?:					boolean,		// true			Record changes only
 	'changesRelogInterval'?:		number,			// 0 			Record the same values (seconds)
 	'changesMinDelta'?:				number,			// 0			Minimum difference from last value
 	'ignoreBelowNumber'?:			string,			// ''			Ignore values below
 	'disableSkippedValueLogging'?:	boolean,		// false		Disable charting optimized logging of skipped values
-	'storageType'?:					string,			// ''
-	'counter'?:						boolean,		// false		Counter
-	'aliasId'?:						string,			// ''
 	'retention'?:					number,			// 0 			Storage retention (seconds)
 	'customRetentionDuration'?:		number,			// 365
-	'maxLength'?:					number,			// 10			maximum datapoint count in RAM
+	'maxLength'?:					number,			// 0			maximum datapoint count in RAM
 	'enableDebugLogs'?:				boolean,		// false		Enable enhanced debug logs for the state
-	'debounce'?:					number,			// 0
+	'debounce'?:					number,			// 1000
 }
 
 // IoStateOpts<T>		-		same as ioBroker.StateCommon but only with 'name' and 'def' as required properties
@@ -68,7 +68,7 @@ export interface IoStateOpts<T extends ValType> {
 					def:	T,
 				},
 	native?:	ioBroker.SettableStateObject['native'],
-	history?:	HistoryObj,
+	history?:	HistoryOpts,
 }
 
 
@@ -268,35 +268,58 @@ export class IoAdapter extends Adapter {
 		// oldCustom
 		const oldCustom: Record<string, unknown> = oldStateObj?.common.custom ?? {};
 
-		// newStateObj
-		const newStateObj: ioBroker.SettableStateObject = {
-			'type':			'state',
-			'common': {
-				'name':		opts.common.name,
-				'def':		opts.common.def,
-				'type':		(typeof opts.common.def === 'number' ) ? 'number' : (typeof opts.common.def === 'boolean') ? 'boolean' : 'string',
-				'read':		true,
-				'write':	false,
-				'role':		'',
-			},
-			'native':		opts.native ?? {},		// Record<string, any>
+		// newCommon
+		const newCommon: ioBroker.StateCommon = {					// defaults
+			'name':		opts.common.name,
+			'def':		opts.common.def,
+			'type':		(typeof opts.common.def === 'number' ) ? 'number' : (typeof opts.common.def === 'boolean') ? 'boolean' : 'string',
+			'read':		true,
+			'write':	false,
+			'role':		'',
 		};
-		Object.assign(newStateObj.common, opts.common);
+		Object.assign(newCommon, opts.common);						// overwrite with opts.common
 
-		// newStateObj history
+		// newCommon history
 		if (this.historyId) {
 			if (opts.history?.enabled) {
-				newStateObj.common.custom = newStateObj.common.custom ?? {};
-				newStateObj.common.custom[this.historyId] = Object.assign(
-					{},
-					oldCustom[this.historyId],				// overwrite with old  history
-					opts.history,							// overwrite with opts.history
-					{ 'changesRelogInterval': 0 },			// overwrite
+				newCommon.custom = newCommon.custom ?? {};
+				newCommon.custom[this.historyId] = Object.assign(
+					{												// defaults
+						"storageType":					"",
+						"counter":						false,
+						"aliasId":						"",
+						"debounceTime":					0,
+						"blockTime":					0,
+						"changesOnly":					true,
+						"changesRelogInterval":			0,
+						"changesMinDelta":				0,
+						"ignoreBelowNumber":			"",
+						"disableSkippedValueLogging":	false,
+						"retention":					0,
+						"customRetentionDuration":		365,
+						"maxLength":					0,
+						"enableDebugLogs":				false,
+						"debounce":						1000
+					},
+					oldCustom[this.historyId],						// override with old  history
+					opts.history,									// override with opts.history
+					{												// overrides
+					//	'changesRelogInterval': 0,
+						"changesOnly":					true,
+					},
 				);
-			} else if (newStateObj.common.custom?.[this.historyId]) {
-				newStateObj.common.custom[this.historyId] = null;
+			} else if (oldCustom[this.historyId] !== undefined) {
+				newCommon.custom = newCommon.custom ?? {};
+				newCommon.custom[this.historyId] = null;			// disable history
 			}
 		}
+
+		// newStateObj
+		const newStateObj: ioBroker.SettableStateObject = {
+			'type':		'state',
+			'common':	newCommon,
+			'native':	opts.native ?? {},							// Record<string, any>
+		};
 
 		// create new or update existing object
 		if (! oldStateObj) {
@@ -309,7 +332,7 @@ export class IoAdapter extends Adapter {
 			return stateObj;		// return ioBroker.StateObject
 
 		} else {
-			const diffs = deepDiff(oldStateObj.common, newStateObj.common) ?? [];
+			const diffs = deepDiff(oldStateObj.common, newCommon) ?? [];
 			for (const diff of diffs) {
 				const { path, kind } = diff;
 				const pathStr = (path ?? ['']).map(val => String(val)).join('.');
@@ -321,7 +344,7 @@ export class IoAdapter extends Adapter {
 
 			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 			if (diffs.length > 0) {
-				await this.setForeignObject(stateId, newStateObj);
+				await this.extendForeignObjectAsync(stateId, newStateObj);
 				const stateObj = await this.getForeignObjectAsync(stateId);
 				if (stateObj?.type !== 'state') {
 					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);

@@ -4,7 +4,7 @@ import   nj					from 'numjs';
 
 // sortBy(key)
 export function sortBy<T>(key: keyof T): ((a: T, b: T) => number) {
-	return (a: T, b: T) => (a[key] > b[key]) ? +1 : ((a[key] < b[key]) ? -1 : 0);
+	return (a: T, b: T) => (a[key] > b[key]) ? 1 : ((a[key] < b[key]) ? -1 : 0);
 }
 
 
@@ -40,9 +40,9 @@ export function parabola(x: [ number, number, number ], y: [ number, number, num
 
 // Magnus
 export class Magnus {
-	private a	= 17.62;		// see https://library.wmo.int/viewer/68695/download?file=8_I-2023_en.pdf&type=pdf&navigator=1
-	private b	= 243.12;		// Guide to Instruments and Methods of Observation - Volume I - Measurement of Meteorological VariablesGuide to Meteorological Instruments and Methods of Observation
-	private c	= 6.112;		// ANNEX 4.B. FORMULAE FOR THE COMPUTATION OF MEASURES OF HUMIDITY, page 198, equation 4.B.1
+	private a	= 17.62;		// see https://www.weather.gov/media/epz/mesonet/CWOP-WMO8.pdf
+	private b	= 243.12;		// Guide to Meteorological Instruments and Methods of Observation - WMO-No. 8 - I - Measurement of Meteorological VariablesGuide to Meteorological Instruments and Methods of Observation
+	private c	= 6.112;		// ANNEX 4.B. FORMULAE FOR THE COMPUTATION OF MEASURES OF HUMIDITY, page 119, Water	(–45°C to 60°C)
 
 	// sdd(T)
 	sdd(T: number): number {						// Sättigungsdampfdruck in hPa
@@ -57,10 +57,9 @@ export class Magnus {
 
 	// td(T, rh)
 	td(T: number, rh: number): number {				// TD = Taupunkttemperatur in °C
-		const { a, b, c } = this;
-		const sdd = this.dd(T, rh);					// sdd := dd
-		const v = Math.log(sdd / c);				// v   := ln(sdd / c);
-		return b*v / (a - v);						// T    = b*v / (a - v)
+		const { a, b } = this;
+		const v = a*T / (b + T) + Math.log(rh/100);
+		return    b*v / (a - v);
 	}
 }
 

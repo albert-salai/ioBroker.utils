@@ -1,90 +1,92 @@
-import { IoAdapter, dateStr }		from './io-adapter';
+import { IoAdapter }		from './io-adapter';
 
 
 // SetTimer, ClearTimer
-export type Now			= ()						=> number;
-export type SetTimer	= (opts:  TimerOpts)		=> Timer | null;
-export type ClearTimer	= (timer: Timer | null)		=> null;
-
-// TimerOpts, SetTimer, ClearTimer
-export interface TimerOpts {
-	name:			string,
-	cb:				TimerCb
-	timeout?:		number,
-	interval?:		number,
-};
+export type SetTimer	= (opts:  TimerOpts)	=> Timer | null;
+export type ClearTimer	= (timer: Timer | null)	=> null;
+export type TimerNow	= ()					=> number;
 
 // TimerCb
-type TimerCb = () => Promise<void>;
+type TimerCb = () => void | Promise<void>;
+
+// TimerOpts, SetTimer, ClearTimer
+export type TimerOpts = {
+	name:			string,
+	cb:				TimerCb,
+	timeoutMs?:		number,
+	intervalMs?:	number,
+} & ({ timeoutMs: number } | { intervalMs: number });
+
 
 // ~~~~~
 // Timer
 // ~~~~~
 export class Timer {
-	public static now:			Now						= _now;
-	public static setTimer:		SetTimer				= _setTimer;
-	public static clearTimer:	ClearTimer				= _clearTimer;
-	public name:				string;
-	public timeoutSecs:			number | null;
-	public intervalSecs:		number | null;
-	public expireTs:			number;
-	public timeoutId:			ioBroker.Timeout		= null;
-	public intervalId:			ioBroker.Interval		= null;
-	public cb:					TimerCb;
+	// configurable Timer functions
+	public static setTimer:			SetTimer			= setTimer;			// (opts:  TimerOpts)		=> Timer | null;
+	public static clearTimer:		ClearTimer			= clearTimer;		// (timer: Timer | null)	=> null;
+	public static now:				TimerNow			= now;				// ()						=> number;
 
-	constructor(opts: TimerOpts) {
-		this.name	= opts.name;
-		this.cb		= opts.cb;
-
-		// timeout, interval
-		if (opts.timeout !== undefined  &&  opts.timeout < 0) {
-			IoAdapter.logf.warn('%-15s %-15s %-10s timeout %f < 0; set to 0', this.constructor.name, 'constructor()', '', opts.timeout);
-		}
-		if (opts.interval !== undefined  &&  opts.interval < 0) {
-			IoAdapter.logf.warn('%-15s %-15s %-10s interval %f < 0; set to 0', this.constructor.name, 'constructor()', '', opts.interval);
-		}
-		this.timeoutSecs	= (opts.timeout  === undefined) ? null : Math.max(0, opts.timeout );
-		this.intervalSecs	= (opts.interval === undefined) ? null : Math.max(0, opts.interval);
-
-		// expires
-		if		(this.timeoutSecs  !== null)	{ this.expireTs = Timer.now() + this.timeoutSecs;  }
-		else if (this.intervalSecs !== null)	{ this.expireTs = Timer.now() + this.intervalSecs; }
-		else									throw new Error(`${this.constructor.name}: constructor(): `);
+	/**
+	 *
+	 * @param timerConfig
+	 */
+	public static configure(timerConfig = { setTimer, clearTimer, now }) {
+		Timer.setTimer		= timerConfig.setTimer;
+		Timer.clearTimer	= timerConfig.clearTimer;
+		Timer.now			= timerConfig.now;
 	}
 
+	// Timer properties
+	public readonly	name:	string;
+	public readonly	cb:		TimerCb;
+	public expireTs:		number;
+	public timeoutMs:		number | null;
+	public intervalMs:		number | null;
+	public timeoutId:		ioBroker.Timeout	= null;
+	public intervalId:		ioBroker.Interval	= null;
 
 	/**
 	 *
 	 * @param opts
 	 */
-	public static init(opts?: { getNow: Now, setTimer: SetTimer, clearTimer: ClearTimer }) {
-		const { getNow, setTimer, clearTimer } = opts ?? {
-			'getNow':		_now,
-			'setTimer':		_setTimer,
-			'clearTimer':	_clearTimer,
-		};
-		Timer.now			= getNow;
-		Timer.setTimer		= setTimer;
-		Timer.clearTimer	= clearTimer;
-	}
+	constructor(opts: TimerOpts) {
+		let { timeoutMs, intervalMs } = opts;
+		this.name	= opts.name;
+		this.cb		= opts.cb;
 
+		// check timeout
+		if (timeoutMs !== undefined) {
+			if (timeoutMs < 0) {
+				IoAdapter.logf.error('%-15s %-15s %-10s timer %s: invalid timeout %f < 0', this.constructor.name, 'constructor()', '', opts.name, timeoutMs);
+				timeoutMs = undefined;
+			} else if (timeoutMs > 0x7FFFFFFF) {
+				IoAdapter.logf.error('%-15s %-15s %-10s timer %s: invalid timeout %f > 0x7FFFFFFF', this.constructor.name, 'constructor()', '', opts.name, timeoutMs);
+				timeoutMs = 0x7FFFFFFF;
+			}
+		}
 
-	/**
-	 *
-	 * @returns
-	 */
-	public toString(): string {
-		return JSON.stringify({
-			'name':				this.name,
-			'timeoutSecs':		(this.timeoutSecs  === null) ? null : Math.ceil(this.timeoutSecs /100)/10,
-			'intervalSecs':		(this.intervalSecs === null) ? null : Math.ceil(this.intervalSecs/100)/10,
-			'expireTs':			dateStr(this.expireTs),
-			'timeoutId':		(this.timeoutId  === null) ? null : this.timeoutId.toString(),
-			'intervalId':		(this.intervalId === null) ? null : this.intervalId.toString(),
-			'cb':				`<${typeof this.cb}>`,
-		}, null, 4);
+		// check interval
+		if (intervalMs !== undefined) {
+			if (intervalMs < 0) {
+				IoAdapter.logf.warn('%-15s %-15s %-10s timer %s: invalid interval %f < 0', this.constructor.name, 'constructor()', '', opts.name, intervalMs);
+				intervalMs = undefined;
+			} else if (intervalMs > 0x7FFFFFFF) {
+				IoAdapter.logf.warn('%-15s %-15s %-10s timer %s: invalid interval %f > 0x7FFFFFFF', this.constructor.name, 'constructor()', '', opts.name, intervalMs);
+				intervalMs = 0x7FFFFFF;
+			}
+		}
+
+		this.timeoutMs	= timeoutMs  ?? null;
+		this.intervalMs	= intervalMs ?? null;
+
+		// _expireTs
+		if		(this.timeoutMs  !== null)		{ this.expireTs = Timer.now() + this.timeoutMs;		}
+		else if (this.intervalMs !== null)		{ this.expireTs = Timer.now() + this.intervalMs;	}
+		else									{ this.expireTs = 0;								}
 	}
 }
+
 
 
 
@@ -92,7 +94,7 @@ export class Timer {
  *
  * @returns
  */
-function _now(): number {
+function now(): number {
 	return Date.now();
 }
 
@@ -101,37 +103,30 @@ function _now(): number {
  *
  * @returns
  */
-function _setTimer(opts: TimerOpts): Timer {
+function setTimer(opts: TimerOpts): Timer {
 	const adapter	= IoAdapter.this;
 	const timer		= new Timer(opts);
 
 	// start setTimeout()
-	if (timer.timeoutSecs !== null) {
-		//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 1', timer.name, dateStr(Timer.getNow()));
+	if (timer.timeoutMs !== null) {
 		timer.timeoutId = adapter.setTimeoutAsync(async () => {
-			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 1', timer.name, dateStr(Timer.getNow()));
-
 			// setTimeout() expired
-			await timer.cb();					// may call _clearTimer()
+			await timer.cb();					// may call clearTimer()
 			timer.timeoutId = null;
 
 			// start setInterval()
-			if (timer.intervalSecs !== null) {
-				//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 2', timer.name, dateStr(Timer.getNow()));
+			if (timer.intervalMs !== null) {
 				timer.intervalId = adapter.setIntervalAsync(async () => {
-					//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 2', timer.name, dateStr(Timer.getNow()));
-					await timer.cb();			// may call _clearTimer()
-				}, timer.intervalSecs) ?? null;
+					await timer.cb();			// may call clearTimer()
+				}, timer.intervalMs) ?? null;
 			}
-		}, timer.timeoutSecs) ?? null;
+		}, timer.timeoutMs) ?? null;
 
 	// start setInterval()
-	} else if (timer.intervalSecs !== null) {
-		//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'started 3', timer.name, dateStr(Timer.getNow()));
+	} else if (timer.intervalMs !== null) {
 		timer.intervalId = adapter.setIntervalAsync(async () => {
-			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_setTimer()', 'elapsed 3', timer.name, dateStr(Timer.getNow()));
-			await timer.cb();					// may call _clearTimer()
-		}, timer.intervalSecs) ?? null;
+			await timer.cb();					// may call clearTimer()
+		}, timer.intervalMs) ?? null;
 	}
 
 	return timer;
@@ -143,19 +138,22 @@ function _setTimer(opts: TimerOpts): Timer {
  * @param timer
  * @returns
  */
-function _clearTimer(timer: Timer | null): null {
+function clearTimer(timer: Timer | null): null {
 	const adapter = IoAdapter.this;
+
 	if (timer) {
+		// clearTimeout()
 		if (timer.timeoutId !== null) {
-			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_clearTimer()', 'cleared', timer.name, dateStr(Timer.getNow()));
 			adapter.clearTimeout(timer.timeoutId);
 			timer.timeoutId = null;
 		}
+
+		// clearInterval()
 		if (timer.intervalId !== null) {
-			//adapter.logf.debug('%-15s %-15s %-10s %-50s %s', this.name, '_clearTimer()', 'cleared', timer.name, dateStr(Timer.getNow()));
 			adapter.clearInterval(timer.intervalId);
 			timer.intervalId = null;
 		}
 	}
+
 	return null;
 }
