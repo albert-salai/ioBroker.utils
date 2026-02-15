@@ -1,7 +1,8 @@
 {
 	"extends": [ "@tsconfig/strictest/tsconfig", "@tsconfig/node22/tsconfig.json" ],
 	"compilerOptions": {
+		"noEmit": true,
 		"sourceMap": true,
-		"outDir": "./build"
+		"outDir": "./dist"
 	}
 }

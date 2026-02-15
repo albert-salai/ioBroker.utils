@@ -4,7 +4,8 @@ import tseslint     from 'typescript-eslint';
 export default tseslint.config(
     {
         ignores: [
-            "build/"
+			"dist/",
+			"eslint.config.mjs"
         ]
     },
     eslint.configs.recommended,
@@ -13,7 +14,9 @@ export default tseslint.config(
     {
         languageOptions: {
             parserOptions: {
-                projectService: true,
+                projectService: {
+                    allowDefaultProject: ['eslint.config.mjs'],
+                },
                 tsconfigRootDir: import.meta.dirname,
             },
         },

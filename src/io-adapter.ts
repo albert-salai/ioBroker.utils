@@ -19,7 +19,7 @@ export function dateStr(ts: number = Timer.now()): string {
 	return sprintf('%02d.%02d.%04d %02d:%02d:%02d', d.getDate(), d.getMonth() + 1, d.getFullYear(), d.getHours(), d.getMinutes(), d.getSeconds());
 }
 
-// valStr(ts)
+// valStr(val)
 export function valStr(val: ioBroker.StateValue): string {					// val: string | number | boolean | null
 	if		(typeof val ===	'number'	)	{ return isFinite(val) ? (Math.round(val*1e6)/1e6).toString() : val.toString(); }
 	else if (typeof val ===	'boolean'	)	{ return val ? 'ON' : 'OFF';	}
@@ -79,7 +79,6 @@ export class IoAdapter extends Adapter {
 	private static	this_:				IoAdapter;
 	public			historyId													= '';		// 'sql.0'
 	private			stateChangeSpecs:	Record<string, StateChangeOpts[]>		= {};		// by stateId
-	private			stateObject:		Record<string, ioBroker.StateObject>	= {};		// by stateId
 	private			mutex														= withTimeout(new Mutex(), AsyncTimeoutMs);
 	private			saveConfig:			boolean;
 	public logf = {
@@ -110,12 +109,12 @@ export class IoAdapter extends Adapter {
 				await this.setState('info.connection', false, true);
 
 				// unhandledRejection
-				process.on('unhandledRejection', (reason: string, p: Promise<unknown>) => {
+				process.once('unhandledRejection', (reason: string, p: Promise<unknown>) => {
 					this.log.error(`unhandledRejection ${reason} ${JSON.stringify(p, null, 4)} ${(new Error('')).stack ?? ''}`);
 				});
 
 				// uncaughtException
-				process.on('uncaughtException', (err, origin) => {
+				process.once('uncaughtException', (err, origin) => {
 					this.log.error(`uncaughtException ${err}\n${origin}`);
 				});
 
@@ -133,13 +132,14 @@ export class IoAdapter extends Adapter {
 
 				// call onReady()
 				await this.onReady();
-				await this.setState('info.connection', true, true);
 
 				// save config and restart adapter
 				if (this.saveConfig) {
 					await this.updateConfig(this.config);			// will restart adapter
 					return;
 				}
+
+				await this.setState('info.connection', true, true);
 
 			} catch (e: unknown) {
 				const stack = (e instanceof Error) ? (e.stack ?? '') : JSON.stringify(e);
@@ -157,13 +157,12 @@ export class IoAdapter extends Adapter {
 					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'val null', stateId);
 
 				} else {
-					try {
-						void this.mutex.runExclusive(async () => {
-							await this.onChange(stateId, { val, ack, ts });
-						});
-					} catch (err: unknown) {
-						this.logf.error('%-15s %-15s %-10s after %d ms\n%s', this.constructor.name, 'runExclusive()', 'timeout', AsyncTimeoutMs, (new Error('')).stack);
-					}
+					this.mutex.runExclusive(async () => {
+						await this.onChange(stateId, { val, ack, ts });
+					}).catch((err: unknown) => {
+						const msg = (err instanceof Error) ? (err.stack ?? err.message) : String(err);
+						this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'onChange()', 'error', stateId, msg);
+					});
 				}
 
 			} else {
@@ -262,7 +261,7 @@ export class IoAdapter extends Adapter {
 		// oldObj
 		const oldStateObj = await this.getForeignObjectAsync(stateId);
 		if (oldStateObj  &&  oldStateObj.type !== 'state') {
-			throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);
+			throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type '${oldStateObj.type}'`);
 		}
 
 		// oldCustom
@@ -303,10 +302,6 @@ export class IoAdapter extends Adapter {
 					},
 					oldCustom[this.historyId],						// override with old  history
 					opts.history,									// override with opts.history
-					{												// overrides
-					//	'changesRelogInterval': 0,
-						"changesOnly":					true,
-					},
 				);
 			} else if (oldCustom[this.historyId] !== undefined) {
 				newCommon.custom = newCommon.custom ?? {};
@@ -327,7 +322,7 @@ export class IoAdapter extends Adapter {
 			await this.setForeignObject(stateId, newStateObj);
 			const stateObj = await this.getForeignObjectAsync(stateId);
 			if (! stateObj  ||  stateObj.type !== 'state') {
-				throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: misssing`);
+				throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: missing`);
 			}
 			return stateObj;		// return ioBroker.StateObject
 
@@ -347,7 +342,7 @@ export class IoAdapter extends Adapter {
 				await this.extendForeignObjectAsync(stateId, newStateObj);
 				const stateObj = await this.getForeignObjectAsync(stateId);
 				if (stateObj?.type !== 'state') {
-					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type ${typeof oldStateObj.type}`);
+					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type '${stateObj?.type ?? 'undefined'}'`);
 				}
 				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'stateObj', stateId, JSON.stringify(newStateObj, null, 4));
 				return stateObj;		// return ioBroker.StateObject
@@ -405,8 +400,9 @@ export class IoAdapter extends Adapter {
 		if (len === 1) {
 			const stateObj = await this.readStateObject(stateId);
 			if (stateObj) {
-				this.stateObject[stateId] = stateObj;
 				await this.subscribeForeignStatesAsync(stateId);
+			} else {
+				this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'subscribe()', 'not found', stateId);
 			}
 		}
 	}
@@ -433,12 +429,12 @@ export class IoAdapter extends Adapter {
 	 * @param spec
 	 */
 	public async subscribeOnce(spec: StateChangeOpts): Promise<void> {
-		const cb = spec.cb;
-		spec.cb = async (stateChange: StateChange) => {
-			await this.unsubscribe(spec);
-			await cb(stateChange);
+		const wrappedSpec: StateChangeOpts = { ...spec };
+		wrappedSpec.cb = async (stateChange: StateChange) => {
+			await this.unsubscribe(wrappedSpec);
+			await spec.cb(stateChange);
 		};
-		await this.subscribe(spec);
+		await this.subscribe(wrappedSpec);
 	}
 
 
@@ -473,8 +469,11 @@ export class IoAdapter extends Adapter {
 	 */
 	public setTimeoutAsync(cb: () => Promise<void>, ms: number): ioBroker.Timeout {
 		return this.setTimeout(() => {
-			void this.mutex.runExclusive(async () => {
+			this.mutex.runExclusive(async () => {
 				await cb();
+			}).catch((err: unknown) => {
+				const msg = (err instanceof Error) ? (err.stack ?? err.message) : String(err);
+				this.logf.error('%-15s %-15s %-10s\n%s', this.constructor.name, 'setTimeoutAsync()', 'error', msg);
 			});
 		}, ms) ?? null;
 	}
@@ -487,8 +486,11 @@ export class IoAdapter extends Adapter {
 	 */
 	public setIntervalAsync(cb: () => Promise<void>, ms: number): ioBroker.Interval {
 		return this.setInterval(() => {
-			void this.mutex.runExclusive(async () => {
+			this.mutex.runExclusive(async () => {
 				await cb();
+			}).catch((err: unknown) => {
+				const msg = (err instanceof Error) ? (err.stack ?? err.message) : String(err);
+				this.logf.error('%-15s %-15s %-10s\n%s', this.constructor.name, 'setIntervalAsync()', 'error', msg);
 			});
 		}, ms) ?? null;
 	}
