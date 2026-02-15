@@ -8,7 +8,6 @@ export function sortBy<T>(key: keyof T): ((a: T, b: T) => number) {
 }
 
 
-
 /**
  *
  * @param x
@@ -33,9 +32,6 @@ export function parabola(x: [ number, number, number ], y: [ number, number, num
 		'c':	(-xx0 *(x[1]*y[2] - x[2]*y[1]) - x[0] * (xx2*y[1] - xx1*y[2]) + x[1]*x[2]*x21*y[0])	/ den
 	};
 }
-
-
-
 
 
 // Magnus
