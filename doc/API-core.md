@@ -58,39 +58,6 @@ valStr(val: ioBroker.StateValue): string  // number (rounded to 6 decimal places
 
 ---
 
-## IoSql — `/opt/iobroker/my_modules/ioBroker.utils/src/io-sql.ts`
-
-Direct MariaDB/MySQL interface for ioBroker SQL history tables.
-
-```ts
-class IoSql {
-  async connect(opts: mysql.ConnectionOptions): Promise<boolean>
-  async onUnload(): Promise<void>
-
-  stateIds(): string[]   // stateIds with known datapoints in DB
-
-  async readHistory(stateIds: string[], opts: SqlQueryOpts): Promise<SqlHistoryRow[]>
-  async writeHistory(samples: IoWriteCacheVal[]): Promise<Record<string,number>>
-    // returns { ts_number: affectedRows, ts_bool: affectedRows }
-  async delHistory(stateIds: string[], opts: SqlQueryOpts): Promise<Record<string,number>>
-
-  async optimizeTablesAsync(): Promise<void>
-  async waitCache(maxLevel?: number): Promise<void>   // waits until Aria cache flush <= maxLevel (default 0 = fully flushed)
-}
-```
-
-**Types:**
-```ts
-interface SqlQueryOpts {
-  ack?, isNull?, at?, after?, from?, before?, until?,  // timestamp filters (ms)
-  desc?, limit?
-}
-interface SqlHistoryRow { id: string, ts: number, val: number|string|boolean, t: 'n'|'s'|'b' }
-interface IoWriteCacheVal { stateId: string, val: ValType, ts: number }
-```
-
----
-
 ## Timer — `/opt/iobroker/my_modules/ioBroker.utils/src/io-timer.ts`
 
 Unified timer abstraction; swappable for history replay (offline) vs. live (online) execution.
@@ -116,9 +83,9 @@ type TimerOpts = { name: string, cb: TimerCb, timeoutMs?: number, intervalMs?: n
                & ({ timeoutMs: number } | { intervalMs: number })
 
 // Function-signature type aliases (useful when storing Timer.setTimer/clearTimer/now as callbacks)
-type SetTimer   = (opts: TimerOpts) => Timer | null
-type ClearTimer = (timer: Timer | null) => null
-type TimerNow   = () => number
+export type SetTimer   = (opts: TimerOpts) => Timer | null
+export type ClearTimer = (timer: Timer | null) => null
+export type TimerNow   = () => number
 ```
 
 **Usage:**

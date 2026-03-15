@@ -31,10 +31,11 @@ export { IoOperator }					from './io-operator';
  * Exports: Timer (main timer class)
  */
 export { Timer }						from './io-timer';
+export type { TimerOpts, SetTimer, ClearTimer, TimerNow }	from './io-timer';
 
 /**
  * io-util — Utility functions for data processing, filtering, and mathematical operations.
  * Exports: sortBy (sorting function), parabola (curve fitting), Magnus (Magnus formula for saturation),
  *          IIR (infinite impulse response filter), newtonRaphson (root finding)
  */
-export { sortBy, parabola, Magnus, IIR, newtonRaphson }		from './io-util';
+export { sortBy, parabola, Magnus, IIR, newtonRaphson, RLS }	from './io-util';
