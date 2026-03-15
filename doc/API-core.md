@@ -1,10 +1,4 @@
-# API Reference
-
-All exports from `src/index.ts`. Import via: `import { ... } from 'iobroker-utils'` (or relative path).
-
----
-
-## IoAdapter — `src/io-adapter.ts`
+## IoAdapter — `/opt/iobroker/my_modules/ioBroker.utils/src/io-adapter.ts`
 
 Extends `@iobroker/adapter-core` `Adapter`. Singleton; access via `IoAdapter.this` / `IoAdapter.logf`.
 
@@ -57,7 +51,6 @@ interface IoStateOpts<T extends ValType> {
 interface HistoryOpts { enabled?, changesOnly?, changesMinDelta?, retention?, ... }  // see source
 ```
 
-**Helpers:**
 ```ts
 dateStr(ts?: number): string   // → "DD.MM.YYYY HH:MM:SS" local time; defaults to now
 valStr(val: ioBroker.StateValue): string  // number (rounded to 6 decimal places) | boolean → 'ON'/'OFF' | string
@@ -65,7 +58,7 @@ valStr(val: ioBroker.StateValue): string  // number (rounded to 6 decimal places
 
 ---
 
-## IoSql — `src/io-sql.ts`
+## IoSql — `/opt/iobroker/my_modules/ioBroker.utils/src/io-sql.ts`
 
 Direct MariaDB/MySQL interface for ioBroker SQL history tables.
 
@@ -98,7 +91,7 @@ interface IoWriteCacheVal { stateId: string, val: ValType, ts: number }
 
 ---
 
-## Timer — `src/io-timer.ts`
+## Timer — `/opt/iobroker/my_modules/ioBroker.utils/src/io-timer.ts`
 
 Unified timer abstraction; swappable for history replay (offline) vs. live (online) execution.
 

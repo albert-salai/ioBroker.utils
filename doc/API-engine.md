@@ -1,10 +1,4 @@
-# API Reference — Reactive Engine
-
-All exports from `src/index.ts`. Import via: `import { ... } from 'iobroker-utils'` (or relative path).
-
----
-
-## IoState / IoStates — `src/io-state.ts`
+## IoState / IoStates — `/opt/iobroker/my_modules/ioBroker.utils/src/io-state.ts`
 
 Typed wrapper around a single ioBroker state. Registered globally in `IoStates.allStates`.
 
@@ -44,7 +38,7 @@ type AnyState = IoState<ValType>
 
 ---
 
-## IoOperator — `src/io-operator.ts`
+## IoOperator — `/opt/iobroker/my_modules/ioBroker.utils/src/io-operator.ts`
 
 Abstract base for reactive operators. Subclass and implement `execute()`.
 
@@ -68,21 +62,9 @@ abstract class IoOperator {
 }
 ```
 
-**Pattern:**
-```ts
-class MyOp extends IoOperator {
-  constructor(input: AnyState, output: AnyState) {
-    super([input], [output], []);
-  }
-  protected async execute(trigger: AnyState) {
-    await this.outputs[0].write(/* computed value */);
-  }
-}
-```
-
 ---
 
-## IoEngine — `src/io-engine.ts`
+## IoEngine — `/opt/iobroker/my_modules/ioBroker.utils/src/io-engine.ts`
 
 Orchestrates startup, history replay, and live state subscriptions.
 
@@ -95,18 +77,6 @@ class IoEngine {
     // historyDays > 0: connects SQL, replays history, then goes live
     // historyDays = 0: initializes states from current ioBroker values only
 
-}
-```
-
-**Usage pattern:**
-```ts
-class MyAdapter extends IoAdapter {
-  protected async onReady() {
-    // 1. create/load IoState instances
-    // 2. create IoOperator instances
-    // 3. start engine
-    await new IoEngine().start(30);   // replay 30 days of history
-  }
 }
 ```
 
