@@ -90,11 +90,8 @@ export class IoStates {
 			return null;
 		}
 
-		// cast and verify — ioBroker stores val as any, so runtime check is necessary
-		let val: T | undefined;
-		try			{ val = state.val as T;	}
-		catch (e)	{ /* empty */			}
-		if (val === undefined  ||  typeof val !== typeof state.val  ||  typeof val !== stateObj.common.type) {
+		const val = state.val as T;	// cast required: compiler can't verify StateValue satisfies T; runtime check below validates
+		if (typeof val !== stateObj.common.type) {
 			adapter.logf.error('%-15s %-15s %-10s %-50s %s', this.name, 'load()', 'type error', stateId, typeof state.val);
 			return null;
 		}

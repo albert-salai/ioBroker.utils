@@ -113,7 +113,7 @@ export class IoEngine {
 		const sqlStateIds = this.sql.stateIds();
 		const dstStateIds = Object.keys(dstStates).sort();
 		for (const stateId of dstStateIds.filter(dstStateId => ! sqlStateIds.includes(dstStateId))) {
-			this.logf.warn('%-15s %-15s %-10s %-50s missing', this.constructor.name, 'hist_exec()', 'datapoint', stateId);
+			this.logf.warn('%-15s %-15s %-10s %-50s missing', this.constructor.name, 'process_hist()', 'datapoint', stateId);
 		}
 
 		// delete existing dstState history in chunks to avoid large single-transaction locks
@@ -264,7 +264,7 @@ export class IoEngine {
 
 	private async hist_execRows(srcRows: SqlHistoryRow[], srcStates: Record<string, AnyState>): Promise<void> {
 		for (const row of srcRows) {
-			if		(row.ts < this.histNow)  { this.logf.error('%-15s %-15s %-10s %-50s %s < %s', this.constructor.name, 'hist_exec()', 'row', row.id, dateStr(row.ts), dateStr(row.ts)); throw new Error(''); }
+			if		(row.ts < this.histNow)  { this.logf.error('%-15s %-15s %-10s %-50s %s < %s', this.constructor.name, 'hist_exec()', 'row', row.id, dateStr(row.ts), dateStr(this.histNow)); throw new Error(''); }
 			else if (row.ts > this.histNow)  { await this.hist_setNow(row.ts); }
 
 			const state = srcStates[row.id];
@@ -273,7 +273,7 @@ export class IoEngine {
 				await new Promise((res, _rej) => setImmediate(res));		// yield to allow logging between rows
 			}
 		}
-		}
+	}
 
 
 	private async hist_write(ioState: AnyState, val: ValType): Promise<void> {

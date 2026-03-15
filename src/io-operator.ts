@@ -17,7 +17,6 @@ export abstract class IoOperator {
 	public static isOnline(): boolean					{ return IoOperator.online;		}
 
 	constructor(inputs: readonly AnyState[], outputs: readonly AnyState[], others: readonly AnyState[]) {
-		this.logf		= IoAdapter.logf;
 		this.others		= others;
 		this.inputs		= inputs;
 		this.outputs	= outputs;

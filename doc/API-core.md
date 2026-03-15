@@ -76,6 +76,8 @@ class Timer {
   expireTs:           number
   timeoutMs:          number | null
   intervalMs:         number | null
+  timeoutId:          ioBroker.Timeout    // read by IoEngine.hist_convertTimers()
+  intervalId:         ioBroker.Interval   // read by IoEngine.hist_convertTimers()
 }
 
 // either timeoutMs or intervalMs (or both) must be provided
@@ -96,6 +98,49 @@ let t = Timer.setTimer({ name: 'myTimer', timeoutMs: 5000, cb: async () => { ...
 let t = Timer.setTimer({ name: 'poll', intervalMs: 60000, cb: async () => { ... } });
 // Clear
 t = Timer.clearTimer(t);
+```
+
+---
+
+## IoSql — `/opt/iobroker/my_modules/ioBroker.utils/src/io-sql.ts`
+
+MariaDB/MySQL history backend. Caller must call `onUnload()` to close the connection.
+
+```ts
+class IoSql {
+  async connect(opts: SqlConnOpts): Promise<boolean>
+    // returns false on connection or datapoint-load failure
+
+  async onUnload(): Promise<void>
+    // cancels pending cache-wait timer and closes the SQL connection
+
+  async readHistory(stateIds: string[], opts: SqlQueryOpts): Promise<SqlHistoryRow[]>
+  async writeHistory(samples: IoWriteCacheVal[]): Promise<Record<string, number>>
+    // inserts into ts_number / ts_string / ts_bool; skips unknown stateIds; returns affected rows by table
+  async delHistory(stateIds: string[], opts: SqlQueryOpts): Promise<Record<string, number>>
+
+  async optimizeTablesAsync(): Promise<void>
+    // OPTIMIZE TABLE ts_number, ts_string, ts_bool WAIT 120
+
+  async waitCache(maxLevel?: number): Promise<void>
+    // polls until Aria dirty-cache ratio <= maxLevel (default 0); guards low-memory hardware
+
+  stateIds(): string[]
+    // returns all stateIds known to the datapoints table
+}
+```
+
+**Types:**
+```ts
+interface IoWriteCacheVal { stateId: string, val: ValType, ts: number }
+
+interface SqlQueryOpts {
+  ack?, isNull?,
+  at?, after?, from?, before?, until?   // epoch-ms; from/until inclusive, after/before exclusive
+  desc?, limit?
+}
+
+interface SqlHistoryRow { id: string, ts: number, val: number | string | boolean, t: 'n' | 's' | 'b' }
 ```
 
 ---

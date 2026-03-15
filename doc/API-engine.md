@@ -1,15 +1,15 @@
 ## IoState / IoStates — `/opt/iobroker/my_modules/ioBroker.utils/src/io-state.ts`
 
-Typed wrapper around a single ioBroker state. Registered globally in `IoStates.allStates`.
+Registry, factory, and typed state wrapper. `IoStates` is the public entry point; `IoState<T>` extends it.
 
 ```ts
 class IoStates {
   static readonly allStates: Record<string, AnyState>   // all created/loaded states, keyed by stateId
-  static write: (state, val) => Promise<void>           // set by IoEngine; triggers ioBroker writeState
+  static write: (state, val) => Promise<void>           // injected by IoEngine; routes writes through adapter
 
-  // Factory methods
+  // Factory methods — public entry points for consumers
   static create<T>(stateId, opts: IoStateOpts<T>): Promise<IoState<T>>
-    // creates object + state in ioBroker; throws if already created
+    // creates object + state in ioBroker; throws if stateId already created
   static load<T>(stateId): Promise<IoState<T> | null>
     // returns existing instance if already loaded; otherwise loads object+state from ioBroker
     // returns null on missing stateId, missing object/state, or type mismatch
@@ -31,6 +31,7 @@ class IoState<T extends ValType> extends IoStates {
   update(val: T, ts: number): Promise<void> // always updates ts; triggers inputFor operators only if val changed
   write(val: ValType): Promise<void>        // write to ioBroker via IoStates.write; skips non-finite numbers
   getHistory(opts: { start?, end?, ack?, limit? }): Promise<{ts,val}[]>  // via historyId sendTo
+  toJSON(): { stateId, name, unit, writable, ts, val, inputFor, outputFrom, logType }
 }
 
 type AnyState = IoState<ValType>

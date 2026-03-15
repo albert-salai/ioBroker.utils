@@ -131,7 +131,7 @@ export function newtonRaphson(f: (x: number) => number, x0: number, options: {
 
 		// abort if first derivative is negligible relative to function value
 		if (Math.abs(yp) <= epsilon * Math.abs(y)) {
-			IoAdapter.logf.error('Newton-Raphson: failed to converged due to nearly zero first derivative');
+			IoAdapter.logf.error('Newton-Raphson: failed to converge due to nearly zero first derivative');
 			return false;
 		}
 

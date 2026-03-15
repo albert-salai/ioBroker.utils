@@ -58,7 +58,7 @@ export class Timer {
 				intervalMs = undefined;
 			} else if (intervalMs > 0x7FFFFFFF) {
 				IoAdapter.logf.warn('%-15s %-15s %-10s timer %s: invalid interval %f > 0x7FFFFFFF', this.constructor.name, 'constructor()', '', opts.name, intervalMs);
-				intervalMs = 0x7FFFFFF;
+				intervalMs = 0x7FFFFFFF;
 			}
 		}
 

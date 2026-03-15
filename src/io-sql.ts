@@ -128,6 +128,7 @@ export class IoSql {
 
 		const tblValues: Record<string, string[]> = {
 			'ts_number':	[],
+			'ts_string':	[],
 			'ts_bool':		[],
 		};
 
@@ -369,7 +370,8 @@ export class IoSql {
 			return obj;
 		}, {} as Record<CacheStatusVar, number>);
 
-		cache_level = status.Aria_pagecache_blocks_not_flushed / (status.Aria_pagecache_blocks_used + status.Aria_pagecache_blocks_unused);
+		const total = status.Aria_pagecache_blocks_used + status.Aria_pagecache_blocks_unused;
+		cache_level = total > 0 ? status.Aria_pagecache_blocks_not_flushed / total : 0;
 
 		return cache_level;
 	}
