@@ -17,16 +17,19 @@
 - Omit filler, repetition, and obvious statements; every line must carry information density
 
 ### TypeScript Code Comments
+- Write documentation that is concise, specific, and useful at a glance — for both human readers and Claude Code
 - **Types are documentation** — leverage them; don't repeat them in prose
 - **Names are documentation** — if you need a comment to explain a name, rename it first
+- **Prefer longer, unambiguous names** — `srcStates` not `src`; avoid negated booleans (`isReady` not `isNotPending`)
 - **Document the "why" and "what", not the "how"** — code shows how
 - **If it's obvious, omit it** — noise degrades signal
-- Omit `@param` and `@returns` when name + type make it obvious
 - Do document `@throws`, side effects, and non-obvious preconditions
-- Skip `@author`, `@version`, `@since` — that's what git is for
-- File-level JSDoc only if purpose is non-obvious
 - Document invariants and ownership on classes (e.g. "caller must call `destroy()`")
 - Interfaces: document semantic contract, not the shape
+- **Document decision points** — when a threshold or value was derived or sourced, say so (`// see <url>`); when an alternative was consciously rejected, note the tradeoff
+- **Extract before commenting** — replace a complex condition or expression with a named variable or function; reach for a comment only if the name still isn't enough
+- **Label logical groups** — a single `// phase: description` line above a block of related statements is preferable to per-line comments
+- **Document async contracts** — note whether a Promise resolves before or after side effects, and whether arguments are mutated
 - One-liner `//` comments inside function bodies for non-obvious logic only
 
 ---
