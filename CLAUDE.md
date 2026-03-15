@@ -1,16 +1,21 @@
 # Project Configuration
 
 ## Project Overview
-**ioBroker.utils** — Legacy/archived ioBroker utilities (superseded by `iobroker-io-lib`).
+**ioBroker.utils** — Shared utilities for ioBroker adapter development. Superseded by `iobroker-io-lib` at `../ioBroker.io-lib/`.
 
 ## Development Notes
 - **Location**: `/opt/iobroker/my_modules/ioBroker.utils`
 - **Platform**: Linux (Raspberry Pi)
 - **Execute as user**: `iobroker` — all commands must use `sudo -u iobroker <command>`
-- **Note**: The active shared library is now `iobroker-io-lib` at `../ioBroker.io-lib/`
 
-## Claude Memory
-- **Primary knowledge store**: This `CLAUDE.md` file — all project details and learned patterns should be recorded here, not in `~/.claude/projects/*/memory/`
+## Documentation Rules
+- `CLAUDE.md` is the single place for cross-references between `.md` files
+- Individual `.md` files (API-core, API-engine, API-misc, etc.) must NOT reference each other
+- Documentation must be AI-friendly: compact, relevant, redundant-free — optimized for AI context window usage, not human narrative prose
+- Omit filler, repetition, and obvious statements; every line must carry information density
 
 ---
-*Last updated: 2026-02-17*
+
+# API Reference
+
+See [API-core.md](API-core.md) (IoAdapter, IoSql, Timer), [API-engine.md](API-engine.md) (IoState, IoOperator, IoEngine), and [API-misc.md](API-misc.md) (utilities).
