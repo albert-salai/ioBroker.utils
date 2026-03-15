@@ -2,20 +2,13 @@ import { IoAdapter }		from './io-adapter';
 import   nj					from 'numjs';
 
 
-// sortBy(key)
 export function sortBy<T>(key: keyof T): ((a: T, b: T) => number) {
 	return (a: T, b: T) => (a[key] > b[key]) ? 1 : ((a[key] < b[key]) ? -1 : 0);
 }
 
 
-/**
- *
- * @param x
- * @param y
- * @returns
- */
+/** Fits a parabola y(x) = ax² + bx + c through three points. */
 export function parabola(x: [ number, number, number ], y: [ number, number, number ]): { a: number, b: number, c: number } {
-	// y(x) = a x^2 + b x + c
 	const xx0 = x[0] * x[0];
 	const xx1 = x[1] * x[1];
 	const xx2 = x[2] * x[2];
@@ -61,28 +54,17 @@ export class Magnus {
 
 
 
-// ~~~
-// IIR
-// ~~~
 export class IIR {
 	public	b:	number[];
 	public	a:	number[];
 	private	w:	(number | null)[];
 
-	/**
-	 *
-	 * @param opts
-	 */
 	constructor(opts: { b: number[], a: number[] }) {
-		//IoAdapter.logf.debug('%-15s %-15s %-10s:\n%s', this.constructor.name, 'constructor()', 'opts', JSON.stringify(opts, null, 4));
 		if (Array.isArray(opts.b)  &&  Array.isArray(opts.a)  &&  opts.b.length === opts.a.length  &&  opts.a.length > 0  &&  opts.a[0] !== undefined) {
 			const a0 = opts.a[0];
 			this.b	 = opts.b.map((b) => b/a0);
-			this.a	 = opts.a.map((a) => a/a0);						// a[0] := 1
-			this.w	 = Array<null>(this.a.length).fill(null);		// w[i] := null
-			//IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'constructor()', 'b', JSON.stringify(this.b, null, 4));
-			//IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'constructor()', 'a', JSON.stringify(this.a, null, 4));
-
+			this.a	 = opts.a.map((a) => a/a0);		// normalize so a[0] = 1
+			this.w	 = Array<null>(this.a.length).fill(null);
 		} else {
 			throw new Error(`${this.constructor.name}: constructor(): invalid config ${JSON.stringify(opts)}`);
 		}
