@@ -60,7 +60,7 @@ valStr(val: ioBroker.StateValue): string  // number (rounded to 6 decimal places
 
 ## Timer — `/opt/iobroker/my_modules/ioBroker.utils/src/io-timer.ts`
 
-Unified timer abstraction; swappable for history replay (offline) vs. live (online) execution.
+Unified timer abstraction; swappable for history vs. live execution.
 
 ```ts
 class Timer {

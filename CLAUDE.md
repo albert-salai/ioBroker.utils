@@ -27,4 +27,4 @@
 
 # API Reference
 
-See [API-core.md](doc/API-core.md) (IoAdapter, IoSql, Timer), [API-engine.md](doc/API-engine.md) (IoState, IoOperator, IoEngine), and [API-misc.md](doc/API-misc.md) (utilities).
+See [API-core.md](doc/API-core.md) (IoAdapter, IoSql, Timer), [API-engine.md](doc/API-engine.md) (IoState, IoOperator, IoEngine), and [API-misc.md](doc/API-misc.md) (utilities). Engine mode details: [API-engine-history.md](doc/API-engine-history.md) (history mode), [API-engine-live.md](doc/API-engine-live.md) (live mode).

@@ -58,7 +58,7 @@ abstract class IoOperator {
     // called by IoState.update(); verifies all states have ts>0, calls init() once, then execute()
 
   static setOnline(v: boolean): void
-  static isOnline(): boolean   						// false during history replay
+  static isOnline(): boolean   						// false during history
 }
 ```
 
