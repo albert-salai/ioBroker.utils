@@ -1,14 +1,14 @@
 {
-	"name": "iobroker-io-lib",
+	"name": "iobroker-utils",
 	"version": "0.0.1",
 	"description": "iobroker adapter lib",
-	"homepage": "https://github.com/albert-salai/ioBroker.io-lib#readme",
+	"homepage": "https://github.com/albert-salai/ioBroker.utils#readme",
 	"bugs": {
-		"url": "https://github.com/albert-salai/ioBroker.io-lib/issues"
+		"url": "https://github.com/albert-salai/ioBroker.utils/issues"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/albert-salai/ioBroker.io-lib.git"
+		"url": "git+https://github.com/albert-salai/ioBroker.utils.git"
 	},
 	"license": "MIT",
 	"author": "Albert Salai",
