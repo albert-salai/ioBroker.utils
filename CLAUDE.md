@@ -20,7 +20,6 @@
 - **Types are documentation** — leverage them; don't repeat them in prose
 - **Names are documentation** — if you need a comment to explain a name, rename it first
 - **Prefer longer, unambiguous names** — `srcStates` not `src`; avoid negated booleans (`isReady` not `isNotPending`)
-- **Document the "why" and "what", not the "how"** — code shows how
 - Do document `@throws`, side effects, and non-obvious preconditions
 - Document invariants and ownership on classes (e.g. "caller must call `destroy()`")
 - Interfaces: document semantic contract, not the shape
