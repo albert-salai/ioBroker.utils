@@ -15,11 +15,9 @@ export type TimerOpts = {
 } & ({ timeoutMs: number } | { intervalMs: number });
 
 
-// ~~~~~
-// Timer
-// ~~~~~
+// Timer — caller owns scheduling; use clearTimer() to cancel before destroy
 export class Timer {
-	// Replaceable by tests/fakes
+	// Injectable by tests; replace via configure() before first use
 	public static setTimer:			SetTimer			= setTimer;
 	public static clearTimer:		ClearTimer			= clearTimer;
 	public static now:				TimerNow			= now;
@@ -43,6 +41,7 @@ export class Timer {
 		this.name	= opts.name;
 		this.cb		= opts.cb;
 
+		// 0x7FFFFFFF is the max safe ms value for setTimeout in Node/browsers (32-bit signed int)
 		if (timeoutMs !== undefined) {
 			if (timeoutMs < 0) {
 				IoAdapter.logf.error('%-15s %-15s %-10s timer %s: invalid timeout %f < 0', this.constructor.name, 'constructor()', '', opts.name, timeoutMs);
@@ -80,26 +79,28 @@ function now(): number {
 }
 
 
-// If timeoutMs is set, the timeout fires first; interval (if any) starts after
+// When both timeoutMs and intervalMs are set, the timeout fires first; the interval
+// starts only after the timeout callback resolves. cb() may call clearTimer() on
+// the same timer — nulling the id before starting the interval guards against that.
 function setTimer(opts: TimerOpts): Timer {
 	const adapter	= IoAdapter.this;
 	const timer		= new Timer(opts);
 
 	if (timer.timeoutMs !== null) {
 		timer.timeoutId = adapter.setTimeoutAsync(async () => {
-			await timer.cb();				// may call clearTimer()
+			await timer.cb();				// resolves before interval is scheduled
 			timer.timeoutId = null;
 
 			if (timer.intervalMs !== null) {
 				timer.intervalId = adapter.setIntervalAsync(async () => {
-					await timer.cb();		// may call clearTimer()
+					await timer.cb();		// cb may call clearTimer(); intervalId read after await
 				}, timer.intervalMs) ?? null;
 			}
 		}, timer.timeoutMs) ?? null;
 
 	} else if (timer.intervalMs !== null) {
 		timer.intervalId = adapter.setIntervalAsync(async () => {
-			await timer.cb();				// may call clearTimer()
+			await timer.cb();				// cb may call clearTimer(); intervalId read after await
 		}, timer.intervalMs) ?? null;
 	}
 

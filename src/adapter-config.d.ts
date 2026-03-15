@@ -1,6 +1,3 @@
-// This file extends the AdapterConfig type from "@types/iobroker"
-
-// Augment the globally declared type ioBroker.AdapterConfig
 declare global {
 	namespace ioBroker {
 		interface AdapterConfig {
@@ -9,5 +6,5 @@ declare global {
 	}
 }
 
-// this is required so the above AdapterConfig is found by TypeScript / type checking
+// Required: makes this file a module so the global augmentation above is recognized by TypeScript
 export {};

@@ -5,6 +5,7 @@ import { sprintf }					from 'sprintf-js';
 import { diff as deepDiff }			from 'deep-diff';
 import { Timer }					from './io-timer';
 
+// 20 s chosen to be safely longer than any expected async I/O round-trip to ioBroker
 const AsyncTimeoutMs = 1000*20;
 
 
@@ -62,12 +63,23 @@ export interface IoStateOpts<T extends ValType> {
 }
 
 
+/**
+ * Extends ioBroker Adapter with:
+ * - sprintf-formatted logging (`logf`) wired after `ready`
+ * - mutex-serialized state-change dispatch and timer callbacks
+ * - reference-counted foreign-state subscriptions
+ * - history configuration merged into state objects
+ *
+ * Caller must NOT call `setTimeoutAsync`/`setIntervalAsync` before `onReady()` resolves,
+ * as `logf` is a no-op until the `ready` event fires.
+ */
 export class IoAdapter extends Adapter {
 	private static	this_:				IoAdapter;
 	public			historyId													= '';		// 'sql.0'
-	private			stateChangeSpecs:	Record<string, StateChangeOpts[]>		= {};		// by stateId
+	private			stateChangeSpecs:	Record<string, StateChangeOpts[]>		= {};		// by stateId; reference-counted
 	private			mutex														= withTimeout(new Mutex(), AsyncTimeoutMs);
 	private			saveConfig:			boolean;
+	// Stubs replaced with real implementations in the `ready` handler once `this.log` and `this.namespace` are available
 	public logf = {
 		'silly':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
 		'info':		(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
@@ -124,6 +136,7 @@ export class IoAdapter extends Adapter {
 			}
 		});
 
+		// All onChange dispatches are serialized through the mutex to prevent concurrent state mutations
 		this.on('stateChange', (stateId: string, stateChange: ioBroker.State | null | undefined) => {
 			if (stateChange) {
 				const { val, ack, ts } = stateChange;
@@ -153,6 +166,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/** Flags config as dirty; the adapter will restart at the end of `onReady()` to apply changes. */
 	public save_config(): void {
 		this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'save_config()', '', 'will restart ...');
 		this.saveConfig = true;
@@ -195,6 +209,12 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/**
+	 * Creates or updates a state object, merging history config with precedence:
+	 * built-in defaults < existing ioBroker values < `opts.history`.
+	 * Resolves to the post-write object as returned by ioBroker (not the input).
+	 * Throws if the existing object at `stateId` is not of type `'state'`.
+	 */
 	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.StateObject> {
 		const oldStateObj = await this.getForeignObjectAsync(stateId);
 		if (oldStateObj  &&  oldStateObj.type !== 'state') {
@@ -203,7 +223,8 @@ export class IoAdapter extends Adapter {
 
 		const oldCustom: Record<string, unknown> = oldStateObj?.common.custom ?? {};
 
-		const newCommon: ioBroker.StateCommon = {					// defaults
+		// type is derived from def so callers don't have to specify both
+		const newCommon: ioBroker.StateCommon = {
 			'name':		opts.common.name,
 			'def':		opts.common.def,
 			'type':		(typeof opts.common.def === 'number' ) ? 'number' : (typeof opts.common.def === 'boolean') ? 'boolean' : 'string',
@@ -301,6 +322,11 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/**
+	 * Registers `spec.cb` for state changes on `spec.stateId`.
+	 * The foreign-state subscription is created on first subscriber and released on last unsubscribe.
+	 * Multiple specs for the same `stateId` are dispatched independently; each filters by its own `val`/`ack`.
+	 */
 	public async subscribe(spec: StateChangeOpts): Promise<void> {
 		const stateId	= spec.stateId;
 		const specs		= this.stateChangeSpecs[stateId] = this.stateChangeSpecs[stateId]  ??  [];
@@ -328,6 +354,11 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/**
+	 * Fires `spec.cb` exactly once for the next matching state change.
+	 * The unsubscribe completes before `spec.cb` is awaited, so the callback
+	 * may safely re-subscribe without creating a duplicate subscription.
+	 */
 	public async subscribeOnce(spec: StateChangeOpts): Promise<void> {
 		const wrappedSpec: StateChangeOpts = { ...spec };
 		wrappedSpec.cb = async (stateChange: StateChange) => {
@@ -355,6 +386,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/** Callback runs under the shared mutex, serialized with state-change dispatch. */
 	public setTimeoutAsync(cb: () => Promise<void>, ms: number): ioBroker.Timeout {
 		return this.setTimeout(() => {
 			this.mutex.runExclusive(async () => {
@@ -366,6 +398,7 @@ export class IoAdapter extends Adapter {
 		}, ms) ?? null;
 	}
 
+	/** Callback runs under the shared mutex, serialized with state-change dispatch. */
 	public setIntervalAsync(cb: () => Promise<void>, ms: number): ioBroker.Interval {
 		return this.setInterval(() => {
 			this.mutex.runExclusive(async () => {

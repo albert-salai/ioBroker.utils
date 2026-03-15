@@ -35,7 +35,6 @@ export class IoStates {
 
 	/** Creates the ioBroker state object and its IoState wrapper. Throws if already created or state is missing after write. */
 	public static async create<T extends ValType>(stateId: string, valObj: IoStateOpts<T>): Promise<IoState<T>> {
-		//adapter.logf.debug('%-15s %-15s %-10s %-50s', this.name, 'create()', '', stateId);
 		if (IoState.allStates[stateId])	{
 			throw new Error(`${this.name}: create(): ${stateId} already created`);
 		}
@@ -44,7 +43,7 @@ export class IoStates {
 
 		await IoAdapter.this.writeStateObj(stateId, valObj);
 
-		// only write default if val is null (avoid overwriting persisted value)
+		// preserve persisted value — only write default when val is null (state was never written)
 		const valState = await IoAdapter.this.readState(stateId);
 		if (valState === null) {
 			throw new Error(`${this.name}: create(): ${stateId} state undefined`);
@@ -135,20 +134,17 @@ export class IoState<T extends ValType> extends IoStates {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
-			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', '',  this.stateId, dateStr(ts), valStr(val));
 			this.val	= val;
 			this.ts		= ts;
 		}
 	}
 
-	/** Called on every state-change event (also replayed from history). Triggers dependent operators only when val changes. */
+	/** Called on every state-change event (also replayed from history). Triggers dependent operators only when val changes. Promise resolves after all inputFor operators have finished executing. */
 	public async update(val: T, ts: number): Promise<void> {
 		if (ts <= 0) {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'update()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 			return;
 
-		} else if (IoOperator.isOnline()) {
-			//this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'update()', '', this.stateId, dateStr(ts), valStr(val));
 		}
 
 		this.ts = ts;
@@ -171,7 +167,7 @@ export class IoState<T extends ValType> extends IoStates {
 	}
 
 
-	/** Fetches history from the configured history adapter (e.g. ioBroker.sql). Returns [] if no historyId is configured. */
+	/** Fetches history from the configured history adapter (e.g. ioBroker.sql). Promise resolves after the sendTo round-trip completes. Returns [] if no historyId is configured. */
 	public async getHistory(options: { start?: number, end?: number, ack?: boolean, limit?: number }): Promise<{ ts: number, val: T }[]> {
 		// see https://github.com/ioBroker/ioBroker.sql/blob/master/main.js#L2302
 		if (IoAdapter.this.historyId) {

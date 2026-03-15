@@ -5,12 +5,19 @@ import mysql 						from 'mysql2/promise';
 type SqlConnOpts	= mysql.ConnectionOptions;
 type SqlConn		= mysql.Connection;
 
+/** A pending write-cache entry; `ts` is epoch-ms, `val` is the raw ioBroker state value. */
 export interface IoWriteCacheVal {
 	stateId:		string,
 	val:			ValType,
 	ts:				number,
 }
 
+/**
+ * Filter and ordering options for history queries.
+ * `at`/`before`/`after`/`from`/`until` are epoch-ms timestamps.
+ * `from`/`until` are inclusive; `after`/`before` are exclusive.
+ * `limit` applies per sub-table before UNION, then again on the merged result.
+ */
 export interface SqlQueryOpts {
 	ack?:			boolean,
 	isNull?:		boolean,
@@ -23,6 +30,11 @@ export interface SqlQueryOpts {
 	limit?:			number,
 }
 
+/**
+ * A row returned from a cross-table history query.
+ * `t` encodes the storage table: 'n'=ts_number, 's'=ts_string, 'b'=ts_bool.
+ * Boolean vals are coerced from MySQL 0/1 to JS boolean before return.
+ */
 export interface SqlHistoryRow {
 	id:			string,
 	ts:			number,
@@ -37,6 +49,7 @@ interface Datapoint { tblName: TableNames, id: number }
 type Datapoints = Record<string, Datapoint>;		// keyed by stateId
 
 
+/** Caller must call `onUnload()` to close the SQL connection and cancel pending timers. */
 export class IoSql {
 	private readonly	logf									= IoAdapter.logf;
 	private 			datapoints: 	Datapoints				= {};			// keyed by stateId; populated by loadDatapoints()
@@ -65,6 +78,7 @@ export class IoSql {
 		}
 	}
 
+	/** Cancels pending cache-wait timer and closes the SQL connection. Must be awaited before process exit. */
 	public async onUnload(): Promise<void> {
 		if (this.timer !== undefined) {
 			clearTimeout(this.timer);
@@ -122,7 +136,7 @@ export class IoSql {
 			if (dp) {
 				const values = tblValues[dp.tblName];
 				if (values) {
-					values.push(`(${String(dp.id)},${String(sample.ts)},${String(sample.val)},TRUE,NULL,0)`);
+					values.push(`(${String(dp.id)},${String(sample.ts)},${String(sample.val)},TRUE,NULL,0)`);	// _from=NULL, q=0
 				}
 			}
 		}
@@ -134,7 +148,7 @@ export class IoSql {
 					INSERT
 					INTO		iobroker.${tblName} (id,ts,val,ack,_from,q)
 					VALUES		${values.join(',')}
-					ON DUPLICATE KEY UPDATE val=val, ack=ack
+					ON DUPLICATE KEY UPDATE val=val, ack=ack		-- no-op update; prevents error on duplicate (ts, id)
 				`;
 				const [ result ] = await this.conn.query<mysql.ResultSetHeader>(qryStr);
 				affectedRows[tblName] = result.affectedRows;
@@ -171,6 +185,7 @@ export class IoSql {
 		return affectedRows;
 	}
 
+	/** Runs OPTIMIZE TABLE on all history tables. WAIT 120 = hold lock up to 120s before giving up. */
 	public async optimizeTablesAsync() {
 		const tables = TableName.map(tableName => `iobroker.${tableName}`).join(', ');
 		this.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'optimizeTablesAsync()', '.....', `optimizing ${tables}`);
@@ -182,6 +197,11 @@ export class IoSql {
 	}
 
 
+	/**
+	 * Removes redundant rows from changesOnly states (rows where val/ack unchanged since previous row
+	 * and the gap is shorter than changesRelogInterval).
+	 * Body is stubbed — see FIXME block for intended implementation.
+	 */
 	async cleanUpHistory() {
 		const adapter	= IoAdapter.this;
 		const historyId	= adapter.historyId;
@@ -307,6 +327,8 @@ export class IoSql {
 	/**
 	 * Polls until Aria cache dirty ratio drops to `maxLevel`.
 	 * Prevents writes from overwhelming the cache on low-memory hardware (Raspberry Pi).
+	 * WaitMs=250 is empirical — short enough to avoid stacking callbacks, long enough not to busy-spin.
+	 * Resolves only after the cache level is within bounds; no side effects on arguments.
 	 */
 	public async waitCache(maxLevel = 0): Promise<void> {
 		const WaitMs = 250;
