@@ -2,18 +2,15 @@ import { IoAdapter, ValType }		from './io-adapter';
 import mysql 						from 'mysql2/promise';
 // based on https://sidorares.github.io/node-mysql2/docs/examples/typescript/basic-custom-class
 
-// SqlConnOpts, SqlConn
 type SqlConnOpts	= mysql.ConnectionOptions;
 type SqlConn		= mysql.Connection;
 
-// IoWriteCacheVal
 export interface IoWriteCacheVal {
 	stateId:		string,
 	val:			ValType,
 	ts:				number,
 }
 
-// SqlQueryOpts
 export interface SqlQueryOpts {
 	ack?:			boolean,
 	isNull?:		boolean,
@@ -26,7 +23,6 @@ export interface SqlQueryOpts {
 	limit?:			number,
 }
 
-// SqlHistoryRow		-		sql history response
 export interface SqlHistoryRow {
 	id:			string,
 	ts:			number,
@@ -34,27 +30,20 @@ export interface SqlHistoryRow {
 	t:			'n'    | 's'    | 'b',
 }
 
-// SqlTables
 type  TableNames = 'ts_number' | 'ts_string' | 'ts_bool';
-const TableName: TableNames[] = [ 'ts_number', 'ts_string', 'ts_bool' ];		// by sql datapoint type 0, 1, 2
+const TableName: TableNames[] = [ 'ts_number', 'ts_string', 'ts_bool' ];		// indexed by sql datapoint type 0, 1, 2
 
-// TableName, Datapoint, Datapoints
 interface Datapoint { tblName: TableNames, id: number }
-type Datapoints = Record<string, Datapoint>;		// by stateId
+type Datapoints = Record<string, Datapoint>;		// keyed by stateId
 
 
-// ~~~~~
-// IoSql
-// ~~~~~
 export class IoSql {
 	private readonly	logf									= IoAdapter.logf;
-	private 			datapoints: 	Datapoints				= {};			// by stateId
+	private 			datapoints: 	Datapoints				= {};			// keyed by stateId; populated by loadDatapoints()
 	private				timer?:			NodeJS.Timeout;
 	private				sqlConn?:		SqlConn;
 
-	/**
-	 *
-	 */
+	/** @throws if connection not yet established */
 	private get conn(): SqlConn {
 		if (this.sqlConn === undefined) {
 			throw new Error(`${this.constructor.name}: conn(): connection not established`);
@@ -62,17 +51,12 @@ export class IoSql {
 		return this.sqlConn;
 	}
 
-	/**
-	 *
-	 * @param opts
-	 * @returns
-	 */
+	/** Returns false on connection or datapoint-load failure. */
 	public async connect(sqlConnOpts: SqlConnOpts): Promise<boolean> {
 		try {
 			this.logf.debug('%-15s %-15s', this.constructor.name, 'init()');
 			this.sqlConn = await mysql.createConnection(sqlConnOpts);
 			await this.loadDatapoints();
-			//this.logf.debug('%-15s %-15s %-10s\n%s', this.constructor.name, 'init()', 'datapoints', JSON.stringify(this.datapoints, null, 4));
 			return true;
 
 		} catch (e: unknown) {
@@ -81,9 +65,6 @@ export class IoSql {
 		}
 	}
 
-	/**
-	 *
-	 */
 	public async onUnload(): Promise<void> {
 		if (this.timer !== undefined) {
 			clearTimeout(this.timer);
@@ -91,12 +72,7 @@ export class IoSql {
 		await this.conn.end();
 	}
 
-	/**
-	 *
-	 * @param stateIds
-	 * @param queryOpts
-	 * @returns
-	 */
+	/** Queries history rows for the given stateIds, joining across typed tables. */
 	public async readHistory(stateIds: string[], queryOpts: SqlQueryOpts): Promise<SqlHistoryRow[]> {
 		await this.waitCache();
 
@@ -106,7 +82,7 @@ export class IoSql {
 
 		const tblSelects = [];
 		const datapoints = this.getDatapoints(stateIds);					// { ts_number: [ dpId, dpId, ...],  ... }
-		for (const [ table, dpIds ] of Object.entries(datapoints)) {		// table: 'ts_number', 'ts_string', 'ts_bool' --> t: 'n' | 's' | 'b'
+		for (const [ table, dpIds ] of Object.entries(datapoints)) {		// table[3] extracts type char: 'n' | 's' | 'b'
 			tblSelects.push(`(
 				SELECT		name as id, ts, val, '${String(table[3])}' AS t
 				FROM		iobroker.${table} LEFT JOIN iobroker.datapoints USING(id)
@@ -120,41 +96,30 @@ export class IoSql {
 			return [];
 		}
 
-		// get rows
 		const qryStr = tblSelects.join(' UNION ALL ') + ` ORDER BY ${order_by} ${LIMIT}`;
 
 		interface HistoryRow extends mysql.RowDataPacket, SqlHistoryRow {}
 		const [ rows ] = await this.conn.query<HistoryRow[]>(qryStr);
-		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'readHistory()', 'rows', '', JSON.stringify(rows, null, 4));
 
 		rows.forEach((row) => {
-			if		(row.t === 'b')		{ row.val = (row.val === 1);	}			// boolean
-			else if (row.t === 'n')		{ /* empty */					}			// number
-			else						{ /* empty */					}			// string
+			if (row.t === 'b') { row.val = (row.val === 1); }		// mysql stores booleans as 0/1
 		});
-		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'readHistory()', 'rows', '', JSON.stringify(rows, null, 4));
-		//this.logf.debug('%-15s %-15s %-10s %-50s got #%d rows', this.constructor.name, 'readHistory()', 'rows', '', rows.length);
 
 		return rows;
 	}
 
-	/**
-	 *
-	 * @param samples
-	 */
+	/** Inserts samples into the appropriate typed table; skips unknown stateIds. */
 	public async writeHistory(samples: IoWriteCacheVal[]): Promise<Record<string, number>> {
 		await this.waitCache();
 
-		// tblValues
 		const tblValues: Record<string, string[]> = {
 			'ts_number':	[],
 			'ts_bool':		[],
 		};
 
-		// convert samples to inserts
 		for (const sample of samples) {
 			const dp = this.datapoints[sample.stateId];
-			if (dp) {		//  ( id, ts, val, ack,_from,q)
+			if (dp) {
 				const values = tblValues[dp.tblName];
 				if (values) {
 					values.push(`(${String(dp.id)},${String(sample.ts)},${String(sample.val)},TRUE,NULL,0)`);
@@ -162,8 +127,7 @@ export class IoSql {
 			}
 		}
 
-		// SQL INSERT values into table
-		const affectedRows: Record<string, number> = {};			// by tblName
+		const affectedRows: Record<string, number> = {};			// keyed by tblName
 		for (const [ tblName, values ] of Object.entries(tblValues)) {
 			if (values.length > 0) {
 				const qryStr = `
@@ -172,12 +136,7 @@ export class IoSql {
 					VALUES		${values.join(',')}
 					ON DUPLICATE KEY UPDATE val=val, ack=ack
 				`;
-				//await this.conn.beginTransaction();							// workaround to ensure transaction is finished
 				const [ result ] = await this.conn.query<mysql.ResultSetHeader>(qryStr);
-				//await this.conn.commit();									// workaround to ensure transaction is finished
-				//await new Promise((res, _rej) => setImmediate(res));		// workaround to ensure transaction is finished
-
-				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeHistory()', 'result', '', JSON.stringify( result, null, 4));
 				affectedRows[tblName] = result.affectedRows;
 			}
 		}
@@ -185,36 +144,26 @@ export class IoSql {
 		return affectedRows;
 	}
 
-	/**
-	 *
-	 * @param stateIds
-	 * @param queryOpts
-	 * @returns
-	 */
+	/** Deletes history rows for the given stateIds; warns if none are known datapoints. */
 	public async delHistory(stateIds: string[], queryOpts: SqlQueryOpts): Promise<Record<string, number>> {
 		await this.waitCache();
 
 		const dpIds = stateIds.map(stateId => this.datapoints[stateId]?.id).filter(dpId => (dpId !== undefined));
-		const affectedRows: Record<string, number> = {};		// by tblName
+		const affectedRows: Record<string, number> = {};		// keyed by tblName
 
 		if (dpIds.length === 0) {
 			this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'delHistory()', 'dpIds', 'empty');
 
 		} else {
 			const datapoints = this.getDatapoints(stateIds);					// { tblName: [ dpId, dpId, ...],  ... }
-			for (const [ tblName, dpIds ] of Object.entries(datapoints)) {		// val AS 'val_number', 'val_string', 'val_bool'
+			for (const [ tblName, dpIds ] of Object.entries(datapoints)) {
 				const and_cond = this.query_and_cond(queryOpts);
 				const qryStr = `
 					DELETE
 					FROM		iobroker.${tblName}
 					WHERE		id IN(${dpIds.join(',')}) ${and_cond}
 				`;
-				//await this.conn.beginTransaction();							// workaround to ensure transaction is finished
 				const [ result ] = await this.conn.query<mysql.ResultSetHeader>(qryStr);
-				//await this.conn.commit();									// workaround to ensure transaction is finished
-				//await new Promise((res, _rej) => setImmediate(res));		// workaround to ensure transaction is finished
-
-				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'delHistory()', 'result', '', JSON.stringify( result, null, 4));
 				affectedRows[tblName] = result.affectedRows;
 			}
 		}
@@ -222,9 +171,6 @@ export class IoSql {
 		return affectedRows;
 	}
 
-	// ~~~~~~~~~~~~~~~~~~~~~
-	// optimizeTablesAsync()
-	// ~~~~~~~~~~~~~~~~~~~~~
 	public async optimizeTablesAsync() {
 		const tables = TableName.map(tableName => `iobroker.${tableName}`).join(', ');
 		this.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'optimizeTablesAsync()', '.....', `optimizing ${tables}`);
@@ -236,14 +182,10 @@ export class IoSql {
 	}
 
 
-	// ~~~~~~~~~~~~~~~~
-	// cleanUpHistory()
-	// ~~~~~~~~~~~~~~~~
 	async cleanUpHistory() {
 		const adapter	= IoAdapter.this;
 		const historyId	= adapter.historyId;
 
-		// get all stateObjs with enabled changesOnly
 		const stateObjs = Object.values(await adapter.getForeignObjectsAsync('*', 'state')).filter(stateObj => {
 			const custom  = (stateObj.common.custom ?? {})	as Record<string, Record<string, unknown> | undefined>;
 			const history = custom[historyId];
@@ -251,7 +193,6 @@ export class IoSql {
 		});
 		this.logf.info('%-15s %-25s %-45s processing %d stateObjs ...', this.constructor.name, 'cleanUpHistory()', historyId, stateObjs.length);
 
-		// cleanup iobroker datapoints
 		for (const stateObj of stateObjs) {
 			const  stateId = stateObj._id;
 			this.logf.info('%-15s %-25s %-45s %s', this.constructor.name, 'cleanUpHistory()', stateId, historyId);
@@ -308,9 +249,7 @@ export class IoSql {
 		this.logf.info('%-15s %-25s %-45s processing %d stateObjs done', this.constructor.name, 'cleanUpHistory()', historyId, stateObjs.length);
 	}
 
-	/**
-	 *
-	 */
+	/** Populates `datapoints` from the iobroker.datapoints table. */
 	private async loadDatapoints() {
 		interface Datapoint extends mysql.RowDataPacket {
 			name:	string,
@@ -319,13 +258,12 @@ export class IoSql {
 		}
 		const qryStr = 'SELECT name, id, type from iobroker.datapoints ORDER BY name';
 		const [ rows ] = await this.conn.query<Datapoint[]>(qryStr);
-		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'loadDatapoints()', 'rows',   '', JSON.stringify( rows,   null, 4));
 
-		for (const row of rows) {						// row: { name: string, id: number, type: number }
+		for (const row of rows) {
 			const stateId	= row.name;
 			const dpId		= row.id;
-			const dpTypeNb	= row.type;					// 0, 1, 2
-			const tblName	= TableName[dpTypeNb];		//
+			const dpTypeNb	= row.type;				// 0, 1, 2
+			const tblName	= TableName[dpTypeNb];
 			if (typeof tblName === 'string') {
 				this.datapoints[stateId] = {
 					'tblName':		tblName,
@@ -335,16 +273,11 @@ export class IoSql {
 		}
 	}
 
-	//
 	public stateIds(): string[] {
 		return Object.keys(this.datapoints);
 	}
 
-	/**
-	 *
-	 * @param stateIds
-	 * @returns
-	 */
+	/** Groups stateIds by their table name, returning only known datapoints. */
 	private getDatapoints(stateIds: string[]) {
 		const dpTables: Record<string, number[]> = {};		// { tblName: [ dpId, dpId, ...],  ... }
 		for (const stateId of stateIds) {
@@ -357,11 +290,7 @@ export class IoSql {
 		return dpTables;
 	}
 
-	/**
-	 *
-	 * @param queryOpts
-	 * @returns
-	 */
+	/** Builds the WHERE AND clause fragment from query options. */
 	private query_and_cond(queryOpts: SqlQueryOpts) {
 		let ts_cond = '';
 		if (queryOpts.at		!== undefined)		{ ts_cond += ` AND ts =   ${String(queryOpts.at    )}`;					}
@@ -376,8 +305,8 @@ export class IoSql {
 
 
 	/**
-	 *
-	 * @param maxLevel
+	 * Polls until Aria cache dirty ratio drops to `maxLevel`.
+	 * Prevents writes from overwhelming the cache on low-memory hardware (Raspberry Pi).
 	 */
 	public async waitCache(maxLevel = 0): Promise<void> {
 		const WaitMs = 250;
@@ -388,8 +317,8 @@ export class IoSql {
 			if (cacheLevel > maxLevel) {
 				this.logf.warn('%-15s %-15s %-10s %4.1f %% >  %4.1f %%; retrying in %d ms ...', this.constructor.name, 'waitCache()', 'cacheLevel', cacheLevel*100, maxLevel*100, WaitMs);
 				cacheWait = true;
-				await new Promise((res, _rej) => {				// wait
-					this.timer = setTimeout(res, WaitMs);		// WaitMs
+				await new Promise((res, _rej) => {
+					this.timer = setTimeout(res, WaitMs);
 				});
 			}
 		} while (cacheLevel > maxLevel);
@@ -400,15 +329,11 @@ export class IoSql {
 	}
 
 
-	/**
-	 *
-	 * @returns
-	 */
+	/** Returns ratio of dirty (not-flushed) to total Aria page-cache blocks. */
 	private async cacheLevel(): Promise<number> {
 		let cache_level = 0;
 
-		// get Aria storage engine status variables
-		//FIXME 'bigIntAsNumber':	true
+		// FIXME: mysql2 does not yet support 'bigIntAsNumber' for SHOW STATUS values
 		const qryStr = `SHOW STATUS LIKE 'Aria_pagecache_blocks_%';`;
 		type CacheStatusVar = 'Aria_pagecache_blocks_not_flushed' | 'Aria_pagecache_blocks_unused' | 'Aria_pagecache_blocks_used';
 		interface CacheStatusRow extends mysql.RowDataPacket {
@@ -416,17 +341,13 @@ export class IoSql {
 			Value:				string,
 		}
 		const [ result ] = await this.conn.query<CacheStatusRow[]>(qryStr);
-		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'cacheLevel()', 'result', '', JSON.stringify( result, null, 4));
 
-		// cacheBlocks
 		const status = result.reduce((obj, row) => {
 			obj[row.Variable_name] = parseInt(row.Value);
 			return obj;
 		}, {} as Record<CacheStatusVar, number>);
-		//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'cacheLevel()', 'status', '', JSON.stringify(status, null, 4));
 
 		cache_level = status.Aria_pagecache_blocks_not_flushed / (status.Aria_pagecache_blocks_used + status.Aria_pagecache_blocks_unused);
-		//this.logf.debug('%-15s %-15s %-10s %-50s %4.1f %%', this.constructor.name, 'cacheLevel()', 'level', '', cache_level*100);
 
 		return cache_level;
 	}
