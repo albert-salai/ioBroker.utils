@@ -95,10 +95,6 @@ class IoEngine {
     // historyDays > 0: connects SQL, replays history, then goes live
     // historyDays = 0: initializes states from current ioBroker values only
 
-  // Lower-level (used internally, exposed for testing/custom flows)
-  async sql_connect(): Promise<boolean>
-  async process_hist(historyDays: number, allStates: AnyState[]): Promise<void>
-  async hist_exec(fromTs: number, srcStates: Record<string, AnyState>): Promise<void>
 }
 ```
 

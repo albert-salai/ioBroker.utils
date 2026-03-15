@@ -100,7 +100,7 @@ export class IoEngine {
 	 * @param historyDays
 	 * @param allStates
 	 */
-	public async process_hist(historyDays: number, allStates: AnyState[]): Promise<void> {
+	private async process_hist(historyDays: number, allStates: AnyState[]): Promise<void> {
 		const adapter = this.adapter;
 		this.logf.debug('%-15s %-15s %-10s %-50s %.1f days', this.constructor.name, 'process_hist()', '', '...', historyDays);
 
@@ -240,7 +240,7 @@ export class IoEngine {
 	 * @param srcStates
 	 * @param dstStates
 	 */
-	public async hist_exec(fromTs: number, srcStates: Record<string, AnyState>): Promise<void> {
+	private async hist_exec(fromTs: number, srcStates: Record<string, AnyState>): Promise<void> {
 		// srcStateIds, flushStateIds
 		const srcStateIds = Object.keys(srcStates).sort();
 
@@ -484,7 +484,7 @@ export class IoEngine {
 	/**
 	 *
 	 */
-	public async sql_connect(): Promise<boolean> {
+	private async sql_connect(): Promise<boolean> {
 		// open db connection
 		const instanceId	= `system.adapter.${this.adapter.historyId}`;
 		const instanceObj	= await this.adapter.getForeignObjectAsync(instanceId);

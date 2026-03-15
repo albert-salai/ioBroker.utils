@@ -1,9 +1,9 @@
-export type		{	AdapterOptions	}			from '@iobroker/adapter-core';
-import { Adapter,	AdapterOptions	}			from '@iobroker/adapter-core';
-import { Mutex, withTimeout }					from 'async-mutex';
-import { sprintf }								from 'sprintf-js';
-import { diff as deepDiff }						from 'deep-diff';
-import { Timer } 								from './io-timer';
+import type	{ AdapterOptions }		from '@iobroker/adapter-core';
+import { Adapter }					from '@iobroker/adapter-core';
+import { Mutex, withTimeout }		from 'async-mutex';
+import { sprintf }					from 'sprintf-js';
+import { diff as deepDiff }			from 'deep-diff';
+import { Timer }					from './io-timer';
 
 // see also
 //		https://github.com/ioBroker/ioBroker/wiki/Adapter-Development-Documentation#structure-of-io-packagejson
