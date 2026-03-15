@@ -25,13 +25,13 @@ class IoState<T extends ValType> extends IoStates {
   readonly stateId:   string
   readonly name:      string
   readonly unit:      string
-  readonly writable:  boolean     // true = external writable input
+  readonly writable:  boolean     			// true = external writable input
   val:  T
-  ts:   number                    // ms timestamp; 0 = not yet initialized
+  ts:   number                    			// ms timestamp; 0 = not yet initialized
   logType: 'none' | 'changed' | 'write'
 
-  readonly inputFor:   IoOperator[]   // operators triggered when this state changes
-  readonly outputFrom: IoOperator[]   // operators that write this state
+  readonly inputFor:   IoOperator[]   		// operators triggered when this state changes
+  readonly outputFrom: IoOperator[]			// operators that write this state
 
   init(val: T, ts: number): void            // set val+ts (ts must be > 0); no operator trigger
   update(val: T, ts: number): Promise<void> // always updates ts; triggers inputFor operators only if val changed
@@ -57,14 +57,14 @@ abstract class IoOperator {
   constructor(inputs, outputs, others)
     // registers this operator on each input.inputFor and each output.outputFrom
 
-  protected init(): Promise<boolean> | boolean   // optional pre-execute init; return true when done
+  protected init(): Promise<boolean> | boolean   	// optional pre-execute init; return true when done
   protected abstract execute(trigger: AnyState): Promise<void> | void
 
   async exec(trigger: AnyState): Promise<void>
     // called by IoState.update(); verifies all states have ts>0, calls init() once, then execute()
 
   static setOnline(v: boolean): void
-  static isOnline(): boolean   // false during history replay
+  static isOnline(): boolean   						// false during history replay
 }
 ```
 
