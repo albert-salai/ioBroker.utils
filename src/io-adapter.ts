@@ -5,22 +5,15 @@ import { sprintf }					from 'sprintf-js';
 import { diff as deepDiff }			from 'deep-diff';
 import { Timer }					from './io-timer';
 
-// see also
-//		https://github.com/ioBroker/ioBroker/wiki/Adapter-Development-Documentation#structure-of-io-packagejson
-//		https://github.com/ioBroker/ioBroker.js-controller/blob/master/packages/adapter/src/lib/adapter/adapter.ts
-
-// AsyncTimeoutMs
-const AsyncTimeoutMs = 1000*20;			// 20 seconds
+const AsyncTimeoutMs = 1000*20;
 
 
-// dateStr(ts)		-		returning string at local time
 export function dateStr(ts: number = Timer.now()): string {
 	const  d = new Date(ts);
 	return sprintf('%02d.%02d.%04d %02d:%02d:%02d', d.getDate(), d.getMonth() + 1, d.getFullYear(), d.getHours(), d.getMinutes(), d.getSeconds());
 }
 
-// valStr(val)
-export function valStr(val: ioBroker.StateValue): string {					// val: string | number | boolean | null
+export function valStr(val: ioBroker.StateValue): string {
 	if		(typeof val ===	'number'	)	{ return isFinite(val) ? (Math.round(val*1e6)/1e6).toString() : val.toString(); }
 	else if (typeof val ===	'boolean'	)	{ return val ? 'ON' : 'OFF';	}
 	else if (typeof val === 'string'	)	{ return val;					}
@@ -28,12 +21,10 @@ export function valStr(val: ioBroker.StateValue): string {					// val: string | 
 }
 
 
-// StateValType, StateChange, StateChangeCb
 export type			ValType			=  number  |  boolean  |  string;
 export interface	StateChange		{ val: ValType, ack: boolean, ts: number }
 type 				StateChangeCb	= (stateChange: StateChange) => void | Promise<void>;
 
-// StateChangeOpts
 interface StateChangeOpts {
 	stateId: 		string,
 	cb:				StateChangeCb,
@@ -41,7 +32,6 @@ interface StateChangeOpts {
 	ack?:			boolean,			// subscribe only to this ack
 }
 
-// WriteStateObj
 export interface HistoryOpts {						// DEFAULT
 	'enabled'?:						boolean,		// n/a
 	'storageType'?:					string,			// ''
@@ -61,7 +51,7 @@ export interface HistoryOpts {						// DEFAULT
 	'debounce'?:					number,			// 1000
 }
 
-// IoStateOpts<T>		-		same as ioBroker.StateCommon but only with 'name' and 'def' as required properties
+/** Same as `ioBroker.StateCommon` but with only `name` and `def` required. */
 export interface IoStateOpts<T extends ValType> {
 	common:		Omit<Partial<ioBroker.StateCommon>, 'def' | 'type'> & {
 					name:	string,
@@ -72,9 +62,6 @@ export interface IoStateOpts<T extends ValType> {
 }
 
 
-// ~~~~~~~~~
-// IoAdapter
-// ~~~~~~~~~
 export class IoAdapter extends Adapter {
 	private static	this_:				IoAdapter;
 	public			historyId													= '';		// 'sql.0'
@@ -89,36 +76,27 @@ export class IoAdapter extends Adapter {
 		'error':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
 	};
 
-	// static getters: IoAdapter.this, IoAdapter.logf
 	public static get this()	{ return IoAdapter.this_;		}
 	public static get logf()	{ return IoAdapter.this_.logf;	}
 
-	/**
-	 *
-	 * @param options
-	 */
 	public constructor(options: AdapterOptions) {
 		super(options);
 		IoAdapter.this_  = this;
 		this.saveConfig = false;
 
-		// on ready
-		// ~~~~~~~~
 		this.on('ready', async () => {
 			try {
 				await this.setState('info.connection', false, true);
 
-				// unhandledRejection
 				process.once('unhandledRejection', (reason: string, p: Promise<unknown>) => {
 					this.log.error(`unhandledRejection ${reason} ${JSON.stringify(p, null, 4)} ${(new Error('')).stack ?? ''}`);
 				});
 
-				// uncaughtException
 				process.once('uncaughtException', (err, origin) => {
 					this.log.error(`uncaughtException ${err}\n${origin}`);
 				});
 
-				// logf
+				// pad aligns multi-adapter log output by namespace width
 				const pad = ' '.repeat(Math.max(0, 16 - this.namespace.length));
 				this.logf.silly		= (fmt: string, ...args) => { this.log.silly(sprintf(pad		+ fmt, ...args)); };
 				this.logf.info		= (fmt: string, ...args) => { this.log.info (sprintf(pad+' '	+ fmt, ...args)); };
@@ -126,14 +104,12 @@ export class IoAdapter extends Adapter {
 				this.logf.warn		= (fmt: string, ...args) => { this.log.warn (sprintf(pad+' '	+ fmt, ...args)); };
 				this.logf.error		= (fmt: string, ...args) => { this.log.error(sprintf(pad		+ fmt, ...args)); };
 
-				// historyId
 				const systemConfig = await this.getForeignObjectAsync('system.config');
 				this.historyId = systemConfig?.common.defaultHistory  ??  '';
 
-				// call onReady()
 				await this.onReady();
 
-				// save config and restart adapter
+				// updateConfig() restarts the adapter, so return immediately after
 				if (this.saveConfig) {
 					await this.updateConfig(this.config);			// will restart adapter
 					return;
@@ -148,8 +124,6 @@ export class IoAdapter extends Adapter {
 			}
 		});
 
-		// on stateChange
-		// ~~~~~~~~~~~~~~
 		this.on('stateChange', (stateId: string, stateChange: ioBroker.State | null | undefined) => {
 			if (stateChange) {
 				const { val, ack, ts } = stateChange;
@@ -170,104 +144,65 @@ export class IoAdapter extends Adapter {
 			}
 		});
 
-		// on unload
-		// ~~~~~~~~~
 		this.on('unload', async (callback: () => void) => {
 			try					{ await this.onUnload();														}
 			catch (e: unknown)	{ this.log.error((e instanceof Error) ? (e.stack ?? '') : JSON.stringify(e));	}
 			finally				{ callback();																	}
 		});
 
-		// this.on('objectChange',	this.onObjectChange.bind(this));
-		// this.on('message',		this.onMessage.bind(this));
 	}
 
 
-	/**
-	 *
-	 */
 	public save_config(): void {
 		this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'save_config()', '', 'will restart ...');
 		this.saveConfig = true;
 	}
 
 
-	/**
-	 *
-	 */
 	protected async onReady(): Promise<void> { /* empty */ }
 
 
-	/**
-	 *
-	 */
 	protected async onUnload(): Promise<void> { /* empty */ }
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @param common
-	 */
 	public async writeFolderObj(stateId: string, common: ioBroker.SettableFolderObject['common']): Promise<void> {
 		const obj: ioBroker.SettableFolderObject = {
 			'type':			'folder',
 			'common':		common,
 			'native':		{}
 		};
-		// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 		await this.setForeignObject(stateId, obj);
 	}
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @param common
-	 */
 	public async writeDeviceObj(stateId: string, common: ioBroker.SettableDeviceObject['common']): Promise<void> {
 		const obj: ioBroker.SettableDeviceObject = {
 			'type':			'device',
 			'common':		common,
 			'native':		{}
 		};
-		// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 		await this.setForeignObject(stateId, obj);
 	}
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @param common
-	 */
 	public async writeChannelObj(stateId: string, common: ioBroker.SettableChannelObject['common']): Promise<void> {
 		const obj: ioBroker.SettableChannelObject = {
 			'type':			'channel',
 			'common':		common,
 			'native':		{}
 		};
-		// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 		await this.setForeignObject(stateId, obj);
 	}
 
-	/**
-	 *
-	 * @param stateId
-	 * @param common
-	 */
-	//
+
 	public async writeStateObj(stateId: string, opts: IoStateOpts<ValType>): Promise<ioBroker.StateObject> {
-		// oldObj
 		const oldStateObj = await this.getForeignObjectAsync(stateId);
 		if (oldStateObj  &&  oldStateObj.type !== 'state') {
 			throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type '${oldStateObj.type}'`);
 		}
 
-		// oldCustom
 		const oldCustom: Record<string, unknown> = oldStateObj?.common.custom ?? {};
 
-		// newCommon
 		const newCommon: ioBroker.StateCommon = {					// defaults
 			'name':		opts.common.name,
 			'def':		opts.common.def,
@@ -276,9 +211,8 @@ export class IoAdapter extends Adapter {
 			'write':	false,
 			'role':		'',
 		};
-		Object.assign(newCommon, opts.common);						// overwrite with opts.common
+		Object.assign(newCommon, opts.common);
 
-		// newCommon history
 		if (this.historyId) {
 			if (opts.history?.enabled) {
 				newCommon.custom = newCommon.custom ?? {};
@@ -300,23 +234,21 @@ export class IoAdapter extends Adapter {
 						"enableDebugLogs":				false,
 						"debounce":						1000
 					},
-					oldCustom[this.historyId],						// override with old  history
-					opts.history,									// override with opts.history
+					oldCustom[this.historyId],						// existing values take precedence over defaults
+					opts.history,									// caller opts take final precedence
 				);
 			} else if (oldCustom[this.historyId] !== undefined) {
 				newCommon.custom = newCommon.custom ?? {};
-				newCommon.custom[this.historyId] = null;			// disable history
+				newCommon.custom[this.historyId] = null;			// null removes history from ioBroker object
 			}
 		}
 
-		// newStateObj
 		const newStateObj: ioBroker.SettableStateObject = {
 			'type':		'state',
 			'common':	newCommon,
 			'native':	opts.native ?? {},							// Record<string, any>
 		};
 
-		// create new or update existing object
 		if (! oldStateObj) {
 			this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'newObj', stateId, JSON.stringify(newStateObj, null, 4));
 			await this.setForeignObject(stateId, newStateObj);
@@ -324,7 +256,7 @@ export class IoAdapter extends Adapter {
 			if (! stateObj  ||  stateObj.type !== 'state') {
 				throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: missing`);
 			}
-			return stateObj;		// return ioBroker.StateObject
+			return stateObj;
 
 		} else {
 			const diffs = deepDiff(oldStateObj.common, newCommon) ?? [];
@@ -337,15 +269,13 @@ export class IoAdapter extends Adapter {
 				else  /* kind === 'A'*/ { this.logf.info('%-15s %-15s %-10s %-50s %s: %s',			this.constructor.name, 'writeStateObj()', 'changed', stateId, pathStr, JSON.stringify(diff.item));							}
 			}
 
-			// `setForeignObjectAsync` is deprecated. use `adapter.setForeignObject` without a callback instead
 			if (diffs.length > 0) {
 				await this.extendForeignObjectAsync(stateId, newStateObj);
 				const stateObj = await this.getForeignObjectAsync(stateId);
 				if (stateObj?.type !== 'state') {
 					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type '${stateObj?.type ?? 'undefined'}'`);
 				}
-				//this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'stateObj', stateId, JSON.stringify(newStateObj, null, 4));
-				return stateObj;		// return ioBroker.StateObject
+				return stateObj;
 
 			} else {
 				return oldStateObj;
@@ -354,45 +284,24 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @returns
-	 */
 	public async readStateObject(stateId: string): Promise<ioBroker.StateObject | null> {
-		const obj = await this.getForeignObjectAsync(stateId) ?? null;		// return null instead of undefined
+		const obj = await this.getForeignObjectAsync(stateId) ?? null;
 		return (obj?.type === 'state') ? obj : null;
-}
+	}
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @param state
-	 */
 	public async writeState(stateId: string, state: ioBroker.SettableState): Promise<void> {
-		//this.logf.debug('%-15s %-15s %-10s %-50s %-25s %-3s %s', this.constructor.name, 'writeState()', '', stateId, this.dateStr(state.ts), (state.ack ? '' : 'cmd'), valStr(state.val));
 		await this.setForeignStateAsync(stateId, state);
 	}
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @returns
-	 */
 	public async readState(stateId: string): Promise<ioBroker.State | null> {
 		const  state = await this.getForeignStateAsync(stateId);
 		return state ?? null;
 	}
 
 
-	/**
-	 *
-	 * @param spec
-	 */
 	public async subscribe(spec: StateChangeOpts): Promise<void> {
-		// add spec to stateChangeSpecs
 		const stateId	= spec.stateId;
 		const specs		= this.stateChangeSpecs[stateId] = this.stateChangeSpecs[stateId]  ??  [];
 		const len		= specs.push(spec);
@@ -408,12 +317,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/**
-	 *
-	 * @param spec
-	 */
 	public async unsubscribe(spec: StateChangeOpts): Promise<void> {
-		// remove spec from stateChangeSpecs
 		const stateId  = spec.stateId;
 		const specs		= (this.stateChangeSpecs[stateId]  ??  []).filter((s) => (s !== spec));
 		this.stateChangeSpecs[stateId] = specs;
@@ -424,10 +328,6 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/**
-	 *
-	 * @param spec
-	 */
 	public async subscribeOnce(spec: StateChangeOpts): Promise<void> {
 		const wrappedSpec: StateChangeOpts = { ...spec };
 		wrappedSpec.cb = async (stateChange: StateChange) => {
@@ -438,13 +338,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/**
-	 *
-	 * @param stateId
-	 * @param state
-	 */
 	private async onChange(stateId: string, { val, ack, ts }: { val: ValType, ack: boolean, ts: number }): Promise<void> {
-		// call callbacks if opts do match
 		const specs = this.stateChangeSpecs[stateId];
 		if (! specs) {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %-3s %s', this.constructor.name, 'onChange()', 'no spec', stateId, dateStr(ts), (ack ? '' : 'cmd'), valStr(val));
@@ -461,12 +355,6 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/**
-	 *
-	 * @param cb
-	 * @param ms
-	 * @returns
-	 */
 	public setTimeoutAsync(cb: () => Promise<void>, ms: number): ioBroker.Timeout {
 		return this.setTimeout(() => {
 			this.mutex.runExclusive(async () => {
@@ -478,12 +366,6 @@ export class IoAdapter extends Adapter {
 		}, ms) ?? null;
 	}
 
-	/**
-	 *
-	 * @param cb
-	 * @param ms
-	 * @returns
-	 */
 	public setIntervalAsync(cb: () => Promise<void>, ms: number): ioBroker.Interval {
 		return this.setInterval(() => {
 			this.mutex.runExclusive(async () => {
