@@ -24,19 +24,11 @@ export class IoEngine {
 	private 			flushSize								= 35000;		// ca. 1 sec.
 	private				flushed:			Promise<void>		= Promise.resolve();
 
-	/**
-	 *
-	 * @param adapter
-	 */
 	public constructor() {
 		this.logf.debug('%-15s %-15s %-10s', this.constructor.name, 'constructor()', '');
 	}
 
 
-	/**
-	 *
-	 * @param historyDays
-	 */
 	public async start(historyDays: number): Promise<void> {
 		const adapter	= this.adapter;
 		const allStates	= Object.values(IoStates.allStates).sort(sortBy('stateId'));
@@ -95,11 +87,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param historyDays
-	 * @param allStates
-	 */
 	private async process_hist(historyDays: number, allStates: AnyState[]): Promise<void> {
 		const adapter = this.adapter;
 		this.logf.debug('%-15s %-15s %-10s %-50s %.1f days', this.constructor.name, 'process_hist()', '', '...', historyDays);
@@ -181,11 +168,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param fromTs
-	 * @param ioStates
-	 */
 	private async hist_init(fromTs: number, ioStates: AnyState[]): Promise<void> {
 		this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'hist_init()', '', '...');
 		const sqlOpts = { 'ack': true, 'isNull': false };
@@ -234,12 +216,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param fromTs
-	 * @param srcStates
-	 * @param dstStates
-	 */
 	private async hist_exec(fromTs: number, srcStates: Record<string, AnyState>): Promise<void> {
 		// srcStateIds, flushStateIds
 		const srcStateIds = Object.keys(srcStates).sort();
@@ -298,20 +274,7 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param srcRows
-	 * @param srcStates
-	 */
 	private async hist_execRows(srcRows: SqlHistoryRow[], srcStates: Record<string, AnyState>): Promise<void> {
-		//const now		= Date.now();
-		const fromTs	= srcRows          [0]?.ts;
-		const untilTs	= srcRows.slice(-1)[0]?.ts;
-
-		if (fromTs !== undefined  &&  untilTs !== undefined) {
-			//this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s', this.constructor.name, 'hist_execRows()', 'processing', `#${String(srcRows.length)}`, `until ${dateStr(untilTs)}`, 'from', dateStr(fromTs));
-		}
-
 		for (const row of srcRows) {
 			if		(row.ts < this.histNow)  { this.logf.error('%-15s %-15s %-10s %-50s %s < %s', this.constructor.name, 'hist_exec()', 'row', row.id, dateStr(row.ts), dateStr(row.ts)); throw new Error(''); }
 			else if (row.ts > this.histNow)  { await this.hist_setNow(row.ts); }
@@ -324,17 +287,9 @@ export class IoEngine {
 				await new Promise((res, _rej) => setImmediate(res));		// enable logging
 			}
 		}
-		if (fromTs !== undefined  &&  untilTs !== undefined) {
-			//this.logf.debug('%-15s %-15s %-10s %-14s %-28s %-6s %s', this.constructor.name, 'hist_execRows()', 'processed', `#${String(srcRows.length)}`, `until ${dateStr(untilTs)}`, 'from', dateStr(fromTs));
 		}
-	}
 
 
-	/**
-	 *
-	 * @param ioState
-	 * @param val
-	 */
 	private async hist_write(ioState: AnyState, val: ValType): Promise<void> {
 		const ts = this.histNow;
 		await ioState.update(val, ts);		// recursion: update() --> op.exec() --> op.execute() --> IoStates.write() --> hist_write() --> update()
@@ -352,9 +307,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 */
 	private async hist_flush(): Promise<void> {
 		const history		= this.histWriteCache.splice(0, this.histWriteCache.length);
 		const flushFromTs	= history          [0]?.ts;
@@ -374,11 +326,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param opts
-	 * @returns
-	 */
 	private hist_setTimer(opts: TimerOpts): Timer {
 		const timer = new Timer(opts);
 		this.histTimers.push(timer);
@@ -387,11 +334,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param timer
-	 * @returns
-	 */
 	private hist_clearTimer(timer: Timer | null): null {
 		if (timer) {
 			const idx = this.histTimers.indexOf(timer);
@@ -405,19 +347,11 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @returns
-	 */
 	private hist_now() {
 		return this.histNow;
 	}
 
 
-	/**
-	 *
-	 * @param nextNow
-	 */
 	private async hist_setNow(nextNow: number): Promise<void> {
 		// process offline timer timeouts					// histNow < expires <= nextNow
 		while (this.histTimers[0]) {
@@ -453,10 +387,8 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 */
-	private async hist_convertTimers(): Promise<void> {						// convert timers - must be called after Timer.configure()
+	/** Must be called after Timer.configure() to activate converted timers. */
+	private async hist_convertTimers(): Promise<void> {
 		// convert offline timer to online timer
 		for (const timer of this.histTimers) {
 			const { name, cb, expireTs, intervalMs } = timer;
@@ -481,9 +413,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 */
 	private async sql_connect(): Promise<boolean> {
 		// open db connection
 		const instanceId	= `system.adapter.${this.adapter.historyId}`;
@@ -502,10 +431,6 @@ export class IoEngine {
 	}
 
 
-	/**
-	 *
-	 * @param ioStates
-	 */
 	private async add_folders(ioStates: AnyState[]): Promise<void> {
 		const folderIds: string[] = [];
 
