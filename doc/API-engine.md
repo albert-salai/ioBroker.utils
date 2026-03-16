@@ -4,8 +4,8 @@ Registry, factory, and typed state wrapper. `IoStates` is the public entry point
 
 ```ts
 class IoStates {
-  static readonly allStates: Record<string, AnyState>   // all created/loaded states, keyed by stateId
-  static write: (state, val) => Promise<void>           // injected by IoEngine; routes writes through adapter
+  static readonly registry: Record<string, AnyState>    // all created/loaded states, keyed by stateId
+  static writeFn: (state, val) => Promise<void>         // injected by IoEngine; routes writes through adapter
 
   // Factory methods — public entry points for consumers
   static create<T>(stateId, opts: IoStateOpts<T>): Promise<IoState<T>>
@@ -24,14 +24,14 @@ class IoState<T extends ValType> extends IoStates {
   ts:   number                    			// ms timestamp; 0 = not yet initialized
   logType: 'none' | 'changed' | 'write'
 
-  readonly inputFor:   IoOperator[]   		// operators triggered when this state changes
-  readonly outputFrom: IoOperator[]			// operators that write this state
+  readonly triggerOperators:    IoOperator[]   // operators triggered when this state changes
+  readonly writtenByOperators:  IoOperator[]   // operators that write this state
 
-  init(val: T, ts: number): void            // set val+ts (ts must be > 0); no operator trigger
-  update(val: T, ts: number): Promise<void> // always updates ts; triggers inputFor operators only if val changed
-  write(val: ValType): Promise<void>        // write to ioBroker via IoStates.write; skips non-finite numbers
+  seed(val: T, ts: number): void                  // set val+ts (ts must be > 0); no operator trigger
+  onStateChange(val: T, ts: number): Promise<void> // always updates ts; triggers triggerOperators only if val changed
+  write(val: ValType): Promise<void>               // write to ioBroker via IoStates.writeFn; skips non-finite numbers
   getHistory(opts: { start?, end?, ack?, limit? }): Promise<{ts,val}[]>  // via historyId sendTo
-  toJSON(): { stateId, name, unit, writable, ts, val, inputFor, outputFrom, logType }
+  toJSON(): { stateId, name, unit, writable, ts, val, triggerOperators, writtenByOperators, logType }
 }
 
 type AnyState = IoState<ValType>
@@ -45,21 +45,21 @@ Abstract base for reactive operators. Subclass and implement `execute()`.
 
 ```ts
 abstract class IoOperator {
-  readonly           inputs:  readonly AnyState[]   // trigger execute() on change
-  protected readonly outputs: readonly AnyState[]   // states this operator may write
-  protected readonly others:  readonly AnyState[]   // states read but not triggering
+  readonly           inputStates:   readonly AnyState[]   // trigger execute() on change
+  protected readonly outputStates:  readonly AnyState[]   // states this operator may write
+  protected readonly watchedStates: readonly AnyState[]   // states read but not triggering
 
-  constructor(inputs, outputs, others)
-    // registers this operator on each input.inputFor and each output.outputFrom
+  constructor(inputStates, outputStates, watchedStates)
+    // registers this operator on each input.triggerOperators and each output.writtenByOperators
 
-  protected init(): Promise<boolean> | boolean   	// optional pre-execute init; return true when done
+  protected setup(): Promise<boolean> | boolean   	// optional pre-execute setup; return true when done
   protected abstract execute(trigger: AnyState): Promise<void> | void
 
-  async exec(trigger: AnyState): Promise<void>
-    // called by IoState.update(); verifies all states have ts>0, calls init() once, then execute()
+  async onTrigger(trigger: AnyState): Promise<void>
+    // called by IoState.onStateChange(); verifies all states have ts>0, calls setup() once, then execute()
 
-  static setOnline(v: boolean): void
-  static isOnline(): boolean   						// false during history
+  static setLive(v: boolean): void
+  static isLive(): boolean   						// false during history
 }
 ```
 
@@ -82,4 +82,4 @@ class IoEngine {
 ```
 
 ---
-*Last updated: 2026-03-15*
+*Last updated: 2026-03-16*

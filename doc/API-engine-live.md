@@ -1,6 +1,6 @@
 # IoEngine — Live Mode
 
-Active when `IoOperator.isOnline() === true`. Entered after history mode completes, or directly via `start(historyDays = 0)`.
+Active when `IoOperator.isLive() === true`. Entered after history mode completes, or directly via `start(historyDays = 0)`.
 
 ## Purpose
 
@@ -11,10 +11,10 @@ Processes real-time ioBroker state changes and routes operator outputs back to i
 ```
 // Only when skipping history mode (historyDays = 0):
 Timer.configure()
-for each ioState: ioState.init(currentVal, currentTs)   — seed initial values from ioBroker
+for each ioState: ioState.seed(currentVal, currentTs)   — seed initial values from ioBroker
 
 // Always (whether coming from history mode or starting directly):
-IoStates.write = adapter.writeState                     — install live write handler
+IoStates.writeFn = adapter.writeState                   — install live write handler
 for each ioState: adapter.subscribe(stateId, ack=true)  — start listening for state changes
 ```
 
@@ -26,8 +26,8 @@ Wall clock — `Timer.now()` returns `Date.now()`. Timers use standard JS `setTi
 
 Each state is subscribed with `ack = true`. On change:
 
-1. `ioState.update(val, ts)` — updates val/ts, triggers `inputFor` operators if val changed.
-2. Operator `exec()` → `execute()` → `IoStates.write()` → `adapter.writeState()` → subscription fires again.
+1. `ioState.onStateChange(val, ts)` — updates val/ts, triggers `triggerOperators` if val changed.
+2. Operator `onTrigger()` → `execute()` → `IoStates.writeFn()` → `adapter.writeState()` → subscription fires again.
 
 This loop is recursive but bounded: it terminates once operator outputs stabilise (no value changes).
 
@@ -36,16 +36,16 @@ This loop is recursive but bounded: it terminates once operator outputs stabilis
      |                 |                    |
      |  state change   |                    |
      | --------------> |                    |
-     |                 | ioState.update()   |
+     |                 | ioState.onStateChange() |
      |                 |------+             |
      |                 |<-----+             |
      |                 |                    |
-     |                 |      exec()        |
+     |                 |    onTrigger()     |
      |                 | -----------------> |
      |                 |                    | execute()
      |                 |                    |-----+
      |                 |                    |<----+
-     |                 |  IoStates.write()  |
+     |                 | IoStates.writeFn() |
      |                 | <----------------- |
      |  writeState()   |                    |
      | <-------------- |                    |
@@ -57,18 +57,18 @@ This loop is recursive but bounded: it terminates once operator outputs stabilis
 
 ## Write Path
 
-When an operator writes a value, `IoStates.write` calls `adapter.writeState(stateId, { val, ack, ts })`:
+When an operator writes a value, `IoStates.writeFn` calls `adapter.writeState(stateId, { val, ack, ts })`:
 
 - `ack = true` for read-only outputs (computed values).
 - `ack = false` for writable states (signals a command to ioBroker).
 
-The written state immediately triggers the subscribed ack change handler, which calls `ioState.update()` and re-executes dependent operators.
+The written state immediately triggers the subscribed ack change handler, which calls `ioState.onStateChange()` and re-executes dependent operators.
 
 ## Operator Contract
 
-`IoOperator.isOnline()` returns `true` — operators may perform side effects and external calls.
+`IoOperator.isLive()` returns `true` — operators may perform side effects and external calls.
 
-`exec()` verifies `ts > 0` for all states (`inputs + outputs + others`) before proceeding. If any state has not yet received a value (`ts === 0`), `init()` is skipped and retried on the next trigger. Once all states are ready, `init()` runs once; if it returns `false`, `execute()` is skipped and `init()` is retried. Otherwise `execute()` is called on every trigger.
+`onTrigger()` verifies `ts > 0` for all states (`inputStates + outputStates + watchedStates`) before proceeding. If any state has not yet received a value (`ts === 0`), `setup()` is skipped and retried on the next trigger. Once all states are ready, `setup()` runs once; if it returns `false`, `execute()` is skipped and `setup()` is retried. Otherwise `execute()` is called on every trigger.
 
 ```
   trigger: state change
@@ -79,7 +79,7 @@ The written state immediately triggers the subscribed ack change handler, which 
          yes                         |
           |                          |
           v                          |
-   init already run? --no--> init() --returns false--+
+  setup already run? --no--> setup() --returns false--+
           |
          yes
           |
@@ -87,8 +87,8 @@ The written state immediately triggers the subscribed ack change handler, which 
       execute()
           |
           v
-     IoStates.write
+     IoStates.writeFn
 ```
 
 ---
-*Last updated: 2026-03-15*
+*Last updated: 2026-03-16*

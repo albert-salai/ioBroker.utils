@@ -31,7 +31,7 @@ export class IoEngine {
 
 	public async start(historyDays: number): Promise<void> {
 		const adapter	= this.adapter;
-		const allStates	= Object.values(IoStates.allStates).sort(sortBy('stateId'));
+		const allStates	= Object.values(IoStates.registry).sort(sortBy('stateId'));
 
 		await this.add_folders(allStates);
 
@@ -42,10 +42,10 @@ export class IoEngine {
 				await this.sql.optimizeTablesAsync();
 			}
 
-			IoOperator.setOnline(false);
+			IoOperator.setLive(false);
 			await this.process_hist(historyDays, allStates);
 			await this.sql.onUnload();
-			IoOperator.setOnline(true);
+			IoOperator.setLive(true);
 
 		} else {
 			Timer.configure();
@@ -54,13 +54,13 @@ export class IoEngine {
 			for (const ioState of allStates) {
 				const state = await this.adapter.readState(ioState.stateId);
 				if (state  &&  state.val !== null) {
-					ioState.init(state.val, state.ts);
+					ioState.seed(state.val, state.ts);
 				}
 			}
 		}
 
 		// IoState.write(): route writes through the adapter; ack=false signals a command
-		IoStates.write = async (ioState: AnyState, val: ValType): Promise<void> => {
+		IoStates.writeFn = async (ioState: AnyState, val: ValType): Promise<void> => {
 			const ts  =   Date.now();
 			const ack = ! ioState.writable;
 			if (ioState.logType === 'write') {
@@ -75,7 +75,7 @@ export class IoEngine {
 				if (ioState.logType === 'changed'  &&  state.val !== ioState.val) {
 					this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'onChange()', ((state.val === ioState.val) ? 'unchanged' : ''), ioState.stateId, dateStr(state.ts), valStr(state.val), state.ack ? '' : ' cmd');
 				}
-				await ioState.update(state.val, state.ts);		// will recursively call op.execute() --> IoState.write()
+				await ioState.onStateChange(state.val, state.ts);		// will recursively call op.execute() --> IoState.write()
 			}});
 		}
 
@@ -90,19 +90,19 @@ export class IoEngine {
 		const fromTs = Date.now() - 1000*3600*24*historyDays;
 		this.histNow = fromTs;
 
-		// redirect Timer and IoStates.write to offline (simulated-clock) implementations
+		// redirect Timer and IoStates.writeFn to offline (simulated-clock) implementations
 		Timer.configure({
 			'setTimer':		this.hist_setTimer  .bind(this),
 			'clearTimer':	this.hist_clearTimer.bind(this),
 			'now':			this.hist_now    	.bind(this),
 		});
-		IoStates.write = this.hist_write.bind(this);
+		IoStates.writeFn = this.hist_write.bind(this);
 
 		// srcStates: have real SQL history to replay; dstStates: read-only computed outputs
 		const srcStates: Record<string, AnyState>	= {};		// by stateId
 		const dstStates: Record<string, AnyState>	= {};		// by stateId
 		for (const ioState of allStates) {
-			const isDst = (ioState.outputFrom.length > 0)  &&  (! ioState.writable);
+			const isDst = (ioState.writtenByOperators.length > 0)  &&  (! ioState.writable);
 			if (isDst)	dstStates[ioState.stateId] = ioState;
 			else		srcStates[ioState.stateId] = ioState;
 		}
@@ -134,7 +134,7 @@ export class IoEngine {
 		await this.hist_setNow(Date.now());
 		Timer.configure();
 		await this.hist_convertTimers();			// convert pending offline timers, may call timer callbacks
-		IoOperator.setOnline(true);
+		IoOperator.setLive(true);
 
 		// flush remaining buffered history writes
 		await this.flushed;
@@ -154,7 +154,7 @@ export class IoEngine {
 			const state = await adapter.readState(srcState.stateId);
 			if (state  &&  state.val !== null  &&  state.val !== srcState.val) {
 				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'process_hist()', 'update', srcState.stateId, dateStr(state.ts), valStr(state.val));
-				await srcState.update(state.val, state.ts);
+				await srcState.onStateChange(state.val, state.ts);
 			}
 		}
 	}
@@ -201,7 +201,7 @@ export class IoEngine {
 				ts = fromTs;
 			}
 
-			ioState.init(val, ts);
+			ioState.seed(val, ts);
 		}
 	}
 
@@ -269,7 +269,7 @@ export class IoEngine {
 
 			const state = srcStates[row.id];
 			if (state) {
-				await state.update(row.val, row.ts);						// will recursively call op.execute() --> IoState.write()
+				await state.onStateChange(row.val, row.ts);						// will recursively call op.execute() --> IoState.write()
 				await new Promise((res, _rej) => setImmediate(res));		// yield to allow logging between rows
 			}
 		}
@@ -278,7 +278,7 @@ export class IoEngine {
 
 	private async hist_write(ioState: AnyState, val: ValType): Promise<void> {
 		const ts = this.histNow;
-		await ioState.update(val, ts);		// recursion: update() --> op.exec() --> op.execute() --> IoStates.write() --> hist_write() --> update()
+		await ioState.onStateChange(val, ts);		// recursion: onStateChange() --> op.onTrigger() --> op.execute() --> IoStates.writeFn() --> hist_write() --> onStateChange()
 
 		// only buffer read-only outputs; skip writable states (commands have no SQL history)
 		if (! ioState.writable) {

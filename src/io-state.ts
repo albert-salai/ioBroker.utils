@@ -7,10 +7,10 @@ export type AnyState = IoState<ValType>;
 // Injected by IoEngine to route writes through the adapter
 type WriteState	= (state: AnyState, val: ValType) => Promise<void>;
 
-/** Registry and factory for IoState instances. Caller must inject `write` before use. */
+/** Registry and factory for IoState instances. Caller must inject `writeFn` before use. */
 export class IoStates {
-	public static readonly	allStates:		Record<string, AnyState> = {};		// keyed by stateId
-	public static			write:			WriteState = (): Promise<void> => Promise.resolve();
+	public static readonly	registry:		Record<string, AnyState> = {};		// keyed by stateId
+	public static			writeFn:		WriteState = (): Promise<void> => Promise.resolve();
 	protected	readonly	logf			= IoAdapter.logf;
 	public		readonly	stateId:		string;
 	public		readonly	name:			string;
@@ -18,8 +18,8 @@ export class IoStates {
 	public		readonly	writable:		boolean;
 	public					ts												= 0;
 	public					logType:		'none' | 'changed' | 'write'	= 'none';
-	public		readonly	inputFor:		IoOperator[]	= [];		// 'this' state is input   for  inputFor   operators
-	public		readonly	outputFrom:		IoOperator[]	= [];		// 'this' state is output  from outputFrom operators
+	public		readonly	triggerOperators:	IoOperator[]	= [];		// operators triggered when 'this' state changes
+	public		readonly	writtenByOperators:	IoOperator[]	= [];		// operators that write 'this' state
 
 	constructor({ stateId, name, unit, write }: {
 		stateId: string,
@@ -35,7 +35,7 @@ export class IoStates {
 
 	/** Creates the ioBroker state object and its IoState wrapper. Throws if already created or state is missing after write. */
 	public static async create<T extends ValType>(stateId: string, valObj: IoStateOpts<T>): Promise<IoState<T>> {
-		if (IoState.allStates[stateId])	{
+		if (IoState.registry[stateId])	{
 			throw new Error(`${this.name}: create(): ${stateId} already created`);
 		}
 
@@ -70,9 +70,9 @@ export class IoStates {
 			return null;
 		}
 
-		if (IoStates.allStates[stateId]) {
+		if (IoStates.registry[stateId]) {
 			adapter.logf.debug('%-15s %-15s %-10s %-50s', this.name, 'load()', 'reusing', stateId);
-			return IoStates.allStates[stateId] as IoState<T>;
+			return IoStates.registry[stateId] as IoState<T>;
 		}
 
 		const stateObj = await adapter.readStateObject(stateId);
@@ -109,7 +109,7 @@ export class IoStates {
 
 
 
-/** Typed wrapper around a single ioBroker state. Registered in `IoStates.allStates` on construction. */
+/** Typed wrapper around a single ioBroker state. Registered in `IoStates.registry` on construction. */
 export class IoState<T extends ValType> extends IoStates {
 	public val:		T;
 
@@ -121,14 +121,14 @@ export class IoState<T extends ValType> extends IoStates {
 		val:		T,
 	}) {
 		super({ stateId, name, unit, write });
-		IoStates.allStates[stateId] = this;
+		IoStates.registry[stateId] = this;
 		this.val = val;
 	}
 
 	/** Sets val/ts from an initial state read. Logs error if ts is invalid (state was never written). */
-	public init(val: T, ts: number): void {
+	public seed(val: T, ts: number): void {
 		if (ts <= 0) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'seed()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
 			this.val	= val;
@@ -136,10 +136,10 @@ export class IoState<T extends ValType> extends IoStates {
 		}
 	}
 
-	/** Called on every state-change event (also replayed from history). Triggers dependent operators only when val changes. Promise resolves after all inputFor operators have finished executing. */
-	public async update(val: T, ts: number): Promise<void> {
+	/** Called on every state-change event (also replayed from history). Triggers dependent operators only when val changes. Promise resolves after all triggerOperators have finished executing. */
+	public async onStateChange(val: T, ts: number): Promise<void> {
 		if (ts <= 0) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'update()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'onStateChange()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 			return;
 
 		}
@@ -147,8 +147,8 @@ export class IoState<T extends ValType> extends IoStates {
 		this.ts = ts;
 		if (this.val !== val) {
 			this.val = val;
-			for (const operator of this.inputFor) {
-				await  operator.exec(this);
+			for (const operator of this.triggerOperators) {
+				await  operator.onTrigger(this);
 			}
 		}
 	}
@@ -159,7 +159,7 @@ export class IoState<T extends ValType> extends IoStates {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', '', this.stateId, dateStr(), valStr(val));
 
 		} else {
-			await IoState.write(this, val);
+			await IoState.writeFn(this, val);
 		}
 	}
 
@@ -183,17 +183,17 @@ export class IoState<T extends ValType> extends IoStates {
 	}
 
 
-	toJSON(): { stateId: string, name: string, unit: string, writable: boolean, ts: string, logType: string, inputFor: string[], outputFrom: string[], val: string } {
+	toJSON(): { stateId: string, name: string, unit: string, writable: boolean, ts: string, logType: string, triggerOperators: string[], writtenByOperators: string[], val: string } {
 		return {
-			'stateId':		this.stateId,
-			'name':			this.name,
-			'unit':			this.unit,
-			'writable':		this.writable,
-			'ts':			dateStr(this.ts),
-			'val':			valStr(this.val),
-			'inputFor':		this.inputFor  .map(op => `Operator<${op.constructor.name}>`),
-			'outputFrom':	this.outputFrom.map(op => `Operator<${op.constructor.name}>`),
-			'logType':		this.logType,
+			'stateId':				this.stateId,
+			'name':					this.name,
+			'unit':					this.unit,
+			'writable':				this.writable,
+			'ts':					dateStr(this.ts),
+			'val':					valStr(this.val),
+			'triggerOperators':		this.triggerOperators  .map((op: IoOperator) => `Operator<${op.constructor.name}>`),
+			'writtenByOperators':	this.writtenByOperators.map((op: IoOperator) => `Operator<${op.constructor.name}>`),
+			'logType':				this.logType,
 		}
 	}
 }

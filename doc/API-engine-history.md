@@ -1,6 +1,6 @@
 # IoEngine — History Mode
 
-Active when `IoOperator.isOnline() === false`. Entered via `start(historyDays > 0)`.
+Active when `IoOperator.isLive() === false`. Entered via `start(historyDays > 0)`.
 
 ## Purpose
 
@@ -10,7 +10,7 @@ Before going live, the engine replays SQL history to recompute derived (dst) sta
   SQL                          Engine                         SQL
   ┌─────────────────┐          ┌───────────────────────────┐   ┌─────────────────┐
   │  src history    │  row by  │  srcState   Operator      │   │  dst history    │
-  │  (fromTs → now) │ ──row──> │  .update() ──.execute()── │──>│  (fromTs → now) │
+  │  (fromTs → now) │ ──row──> │  .onStateChange() ──.execute()── │──>│  (fromTs → now) │
   └─────────────────┘          │              │            │   └─────────────────┘
                                │          dstState         │
                                │          hist_write       │
@@ -21,28 +21,28 @@ Before going live, the engine replays SQL history to recompute derived (dst) sta
 ## Startup Sequence
 
 ```
-IoOperator.setOnline(false)
+IoOperator.setLive(false)
 process_hist()
-  ├─ Timer.configure(offline)    — redirect Timer to simulated-clock implementation
-  ├─ IoStates.write = hist_write — redirect writes to buffered SQL path (not ioBroker)
-  ├─ sql.delHistory(dstStateIds) — delete existing dst history from fromTs in chunks
+  ├─ Timer.configure(offline)       — redirect Timer to simulated-clock implementation
+  ├─ IoStates.writeFn = hist_write  — redirect writes to buffered SQL path (not ioBroker)
+  ├─ sql.delHistory(dstStateIds)    — delete existing dst history from fromTs in chunks
   ├─ hist_init()         — seed all states: last SQL value before window,
   │                         else first value in window (timestamped at fromTs),
   │                         else current ioBroker state (throws if not found)
   ├─ hist_exec()         — read src rows from SQL in adaptive chunks; call
-  │                         srcState.update() per row to drive operators
+  │                         srcState.onStateChange() per row to drive operators
   ├─ hist_setNow(now)    — advance simulated clock to wall time, firing any
   │                         expired timers
   ├─ Timer.configure()   — restore live JS timer implementation
   ├─ hist_convertTimers() — convert any remaining offline timers to live JS timers
-  ├─ IoOperator.setOnline(true)   ← exits history mode; operators may now do I/O
+  ├─ IoOperator.setLive(true)   ← exits history mode; operators may now do I/O
   ├─ hist_flush()        — flush remaining buffered SQL writes
   ├─ fix dstState divergence — delete + rewrite any dst SQL row whose value
   │                            diverged from in-memory state during replay
   └─ sync srcStates      — re-read any src states that changed in ioBroker
                            while history processing ran
 sql.onUnload()
-IoOperator.setOnline(true)       ← redundant safety call from start()
+IoOperator.setLive(true)       ← redundant safety call from start()
 ```
 
 ## Clock
@@ -71,22 +71,22 @@ During history mode the engine uses a simulated clock (`histNow`) instead of wal
 
 States are split into two groups at the start of `process_hist()`:
 
-- **srcStates** — have real SQL history; they drive operators by calling `update()` for each row.
-  Condition: `writable === true` OR `outputFrom.length === 0`
+- **srcStates** — have real SQL history; they drive operators by calling `onStateChange()` for each row.
+  Condition: `writable === true` OR `writtenByOperators.length === 0`
 - **dstStates** — computed outputs written by operators; their existing SQL history is deleted from `fromTs` before replay, then rewritten by `hist_write()`.
-  Condition: `outputFrom.length > 0` AND `writable === false`
+  Condition: `writtenByOperators.length > 0` AND `writable === false`
 
 ## Write Path
 
-During history mode, `IoStates.write` routes through `hist_write()` instead of the adapter:
+During history mode, `IoStates.writeFn` routes through `hist_write()` instead of the adapter:
 
-1. Calls `ioState.update(val, histNow)` to propagate the value in-memory (may recursively trigger further operator executions).
+1. Calls `ioState.onStateChange(val, histNow)` to propagate the value in-memory (may recursively trigger further operator executions).
 2. Buffers `{ stateId, val, ts }` in `histWriteCache` — writable states are skipped because commands have no SQL history.
 3. Flushes to SQL in batches of `flushSize` rows. `flushSize` is auto-tuned via exponential moving average to keep each flush at ~1 second.
 
 ## Operator Contract
 
-`IoOperator.isOnline()` returns `false` during history mode — operators must skip side effects and external calls. The `exec()` / `execute()` call sequence is otherwise identical to live mode.
+`IoOperator.isLive()` returns `false` during history mode — operators must skip side effects and external calls. The `onTrigger()` / `execute()` call sequence is otherwise identical to live mode.
 
 ---
-*Last updated: 2026-03-15*
+*Last updated: 2026-03-16*
