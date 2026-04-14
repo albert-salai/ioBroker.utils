@@ -2,12 +2,13 @@ import { IoAdapter }		from './io-adapter';
 import   nj					from 'numjs';
 
 
+/* Returns a comparator that sorts objects of type T by the given key in ascending order. */
 export function sortBy<T>(key: keyof T): ((a: T, b: T) => number) {
 	return (a: T, b: T) => (a[key] > b[key]) ? 1 : ((a[key] < b[key]) ? -1 : 0);
 }
 
 
-/** Fits a parabola y(x) = ax² + bx + c through three points. */
+/* Fits a parabola y(x) = ax² + bx + c through three points. */
 export function parabola(x: [ number, number, number ], y: [ number, number, number ]): { a: number, b: number, c: number } {
 	const xx0 = x[0] * x[0];
 	const xx1 = x[1] * x[1];
@@ -27,23 +28,28 @@ export function parabola(x: [ number, number, number ], y: [ number, number, num
 }
 
 
-// Magnus formula for saturation vapor pressure — constants from WMO-No. 8 Annex 4.B, p.119, Water (–45°C to 60°C)
-// see https://www.weather.gov/media/epz/mesonet/CWOP-WMO8.pdf
+/*
+ * Magnus formula for saturation vapor pressure — constants from WMO-No. 8 Annex 4.B, p.119, Water (–45°C to 60°C).
+ * see https://www.weather.gov/media/epz/mesonet/CWOP-WMO8.pdf
+ */
 export class Magnus {
 	private a	= 17.62;
 	private b	= 243.12;
 	private c	= 6.112;
 
-	sdd(T: number): number {						// Sättigungsdampfdruck in hPa
+	/* Saturation vapor pressure at temperature T (°C), in hPa. */
+	sdd(T: number): number {
 		const { a, b, c } = this;
 		return c * Math.exp(a*T / (b + T));
 	}
 
-	dd(T: number, rh: number): number {				// Dampfdruck in hPa
+	/* Actual vapor pressure at temperature T (°C) and relative humidity rh (%), in hPa. */
+	dd(T: number, rh: number): number {
 		return rh/100 * this.sdd(T);
 	}
 
-	td(T: number, rh: number): number {				// Taupunkttemperatur in °C
+	/* Dew point at temperature T (°C) and relative humidity rh (%), in °C. */
+	td(T: number, rh: number): number {
 		const { a, b } = this;
 		const v = a*T / (b + T) + Math.log(rh/100);
 		return    b*v / (a - v);
@@ -52,12 +58,13 @@ export class Magnus {
 
 
 
-// Direct-form II transposed IIR filter. Coefficients are normalized to a[0] on construction.
+/* Direct-form II transposed IIR filter. Coefficients are normalized to a[0] on construction. */
 export class IIR {
-	public	b:	number[];
-	public	a:	number[];
-	private	w:	(number | null)[];
+	public	b:	number[];				// normalized numerator coefficients
+	public	a:	number[];				// normalized denominator coefficients (a[0] = 1)
+	private	w:	(number | null)[];		// filter state; null until first call to next()
 
+	/* Normalizes b/a to a[0]; throws if arrays are empty, mismatched in length, or a[0] is zero. */
 	constructor(opts: { b: number[], a: number[] }) {
 		if (Array.isArray(opts.b)  &&  Array.isArray(opts.a)  &&  opts.b.length === opts.a.length  &&  opts.a.length > 0  &&  opts.a[0] !== undefined) {
 			const a0 = opts.a[0];
@@ -70,6 +77,7 @@ export class IIR {
 	}
 
 
+	/* Feeds x_0 into the filter and returns the filtered output. Initializes state to steady-state on first call. */
 	next(x_0: number): number {
 		// lazy init: pre-fill state so the filter starts at steady-state for x_0
 		if (this.w[0] === null) {
@@ -90,10 +98,12 @@ export class IIR {
 
 
 
-// see https://github.com/scijs/newton-raphson-method#readme
-// When fp is omitted, the derivative is estimated via a 5-point stencil (O(h^4) accuracy).
-// xMin/xMax are expanded inward by 2h+tolerance when fp is absent to keep finite-difference points in bounds.
-// Returns false if the derivative becomes nearly zero (ill-conditioned) or maxIter is reached.
+/*
+ * Newton-Raphson root-finder. When fp is omitted, derivative is estimated via a 5-point stencil (O(h^4) accuracy).
+ * xMin/xMax are expanded inward by 2h+tolerance when fp is absent to keep finite-difference points in bounds.
+ * Returns false if the derivative becomes nearly zero (ill-conditioned) or maxIter is reached.
+ * see https://github.com/scijs/newton-raphson-method#readme
+ */
 export function newtonRaphson(f: (x: number) => number, x0: number, options: {
 	fp?:			(x: number) => number,
 	h?:				number,
@@ -153,16 +163,19 @@ export function newtonRaphson(f: (x: number) => number, x0: number, options: {
 
 
 
-// Recursive Least Squares filter with forgetting factor.
-// Caller must call init() before the first update(); default field values are placeholders only.
-// see https://en.wikipedia.org/wiki/Recursive_least_squares_filter
+/*
+ * Recursive Least Squares filter with forgetting factor.
+ * Caller must call init() before the first update(); default field values are placeholders only.
+ * see https://en.wikipedia.org/wiki/Recursive_least_squares_filter
+ */
 export class RLS {
 	private dimensions				= 1;
 	private lambda					= 0.95;
-	private eye:		nj.NdArray	= nj.identity(this.dimensions);
-	private w_hat:		nj.NdArray	= nj.zeros(this.dimensions);
-	private P:			nj.NdArray	= this.eye.multiply(1);
+	private eye:		nj.NdArray	= nj.identity(this.dimensions);		// identity matrix; resized in init()
+	private w_hat:		nj.NdArray	= nj.zeros(this.dimensions);		// parameter estimate column vector
+	private P:			nj.NdArray	= this.eye.multiply(1);				// error covariance matrix
 
+	/* Initializes filter dimensions, forgetting factor, and covariance. Must be called before update(). */
 	public init(w: number[], lambda: number, P: number|number[][]): void {
 		this.dimensions	= w.length;
 		this.lambda		= lambda;
@@ -179,6 +192,7 @@ export class RLS {
 		IoAdapter.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'init()', 'P',		JSON.stringify(this.P		));
 	}
 
+	/* Updates the parameter estimate with a new (input, output) sample. Returns the current w_hat as a flat array. */
 	public update(x_vals: number[], y_val: number): number[] {
 		const x		= nj.array(x_vals).reshape(this.dimensions, 1);		// input column vector
 		const xT	= x.T;												// input row    vector
@@ -197,20 +211,8 @@ export class RLS {
 		//     = P (I - (x xT P)/(lambda + xT P x)) 1/lambda
 		this.P = this.P.dot(this.eye.subtract(x_xT_P)).multiply(1/(this.lambda + xT_P_x));
 
-		// w_hat += y_err * gain  (mutates w_hat in-place via numjs add with false flag)
-		this.w_hat.add(gain.multiply(y_err), false);
+		this.w_hat.add(gain.multiply(y_err), false);	// false = mutate in-place (numjs add flag)
 
-		/*
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'P',		JSON.stringify(this.P		));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'x', 		JSON.stringify(x			));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'xT',		JSON.stringify(xT			));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'y_hat',	JSON.stringify(y_hat		));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'y_err',	JSON.stringify(y_err		));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'P_x',		JSON.stringify(P_x			));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'xT_P_x',	JSON.stringify(xT_P_x		));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'gain',		JSON.stringify(gain			));
-		IoAdapter.this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'update()', 'w_hat',	JSON.stringify(this.w_hat	));
-		*/
 		return this.w_hat.reshape(this.dimensions).tolist();
 	}
 }

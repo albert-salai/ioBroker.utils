@@ -5,15 +5,16 @@ import { sprintf }					from 'sprintf-js';
 import { diff as deepDiff }			from 'deep-diff';
 import { Timer }					from './io-timer';
 
-// 20 s chosen to be safely longer than any expected async I/O round-trip to ioBroker
-const AsyncTimeoutMs = 1000*20;
+const AsyncTimeoutMs = 1000*20;	// 20 s chosen to be safely longer than any expected async I/O round-trip to ioBroker
 
 
+/* Formats ts (epoch-ms) as 'DD.MM.YYYY HH:MM:SS'. Defaults to now if ts is omitted. */
 export function dateStr(ts: number = Timer.now()): string {
 	const  d = new Date(ts);
 	return sprintf('%02d.%02d.%04d %02d:%02d:%02d', d.getDate(), d.getMonth() + 1, d.getFullYear(), d.getHours(), d.getMinutes(), d.getSeconds());
 }
 
+/* Returns a human-readable string for any ioBroker state value. Numbers rounded to 6 decimal places. */
 export function valStr(val: ioBroker.StateValue): string {
 	if		(typeof val ===	'number'	)	{ return isFinite(val) ? (Math.round(val*1e6)/1e6).toString() : val.toString(); }
 	else if (typeof val ===	'boolean'	)	{ return val ? 'ON' : 'OFF';	}
@@ -26,6 +27,7 @@ export type			ValType			=  number  |  boolean  |  string;
 export interface	StateChange		{ val: ValType, ack: boolean, ts: number }
 type 				StateChangeCb	= (stateChange: StateChange) => void | Promise<void>;
 
+/* Options for a single state-change subscription; val/ack act as filters when present. */
 interface StateChangeOpts {
 	stateId: 		string,
 	cb:				StateChangeCb,
@@ -52,7 +54,7 @@ export interface HistoryOpts {						// DEFAULT
 	'debounce'?:					number,			// 1000
 }
 
-/** Same as `ioBroker.StateCommon` but with only `name` and `def` required. */
+/* Same as ioBroker.StateCommon but with only name and def required. */
 export interface IoStateOpts<T extends ValType> {
 	common:		Omit<Partial<ioBroker.StateCommon>, 'def' | 'type'> & {
 					name:	string,
@@ -63,34 +65,32 @@ export interface IoStateOpts<T extends ValType> {
 }
 
 
-/**
- * Extends ioBroker Adapter with:
- * - sprintf-formatted logging (`logf`) wired after `ready`
- * - mutex-serialized state-change dispatch and timer callbacks
- * - reference-counted foreign-state subscriptions
- * - history configuration merged into state objects
- *
- * Caller must NOT call `setTimeoutAsync`/`setIntervalAsync` before `onReady()` resolves,
- * as `logf` is a no-op until the `ready` event fires.
+/*
+ * Extends ioBroker Adapter with sprintf-formatted logging, mutex-serialized callbacks,
+ * reference-counted foreign-state subscriptions, and history config merging.
+ * logf is a no-op until onReady() resolves — caller must not rely on it before then.
  */
 export class IoAdapter extends Adapter {
-	private static	this_:				IoAdapter;
+	private static	this_:				IoAdapter;						// singleton; set in constructor
 	public			historyId													= '';		// 'sql.0'
 	private			stateChangeSpecs:	Record<string, StateChangeOpts[]>		= {};		// by stateId; reference-counted
 	private			mutex														= withTimeout(new Mutex(), AsyncTimeoutMs);
 	private			saveConfig:			boolean;
 	// Stubs replaced with real implementations in the `ready` handler once `this.log` and `this.namespace` are available
 	public logf = {
-		'silly':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
-		'info':		(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
-		'debug':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
-		'warn':		(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
-		'error':	(_fmt: string, ..._args: unknown[]): void => { /* empty */ },
+		'silly':	(_fmt: string, ..._args: unknown[]): void => {},
+		'info':		(_fmt: string, ..._args: unknown[]): void => {},
+		'debug':	(_fmt: string, ..._args: unknown[]): void => {},
+		'warn':		(_fmt: string, ..._args: unknown[]): void => {},
+		'error':	(_fmt: string, ..._args: unknown[]): void => {},
 	};
 
+	/* Returns the singleton IoAdapter instance. */
 	public static get this()	{ return IoAdapter.this_;		}
+	/* Returns the logf object from the singleton instance. */
 	public static get logf()	{ return IoAdapter.this_.logf;	}
 
+	/* Registers ioBroker event handlers and sets the singleton. Caller must not use logf until onReady() resolves. */
 	public constructor(options: AdapterOptions) {
 		super(options);
 		IoAdapter.this_  = this;
@@ -173,12 +173,13 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	protected async onReady(): Promise<void> { /* empty */ }
+	/* Override to perform adapter startup after ioBroker connection is established. */
+	protected async onReady(): Promise<void> {}
 
+	/* Override to perform cleanup before the adapter process exits. */
+	protected async onUnload(): Promise<void> {}
 
-	protected async onUnload(): Promise<void> { /* empty */ }
-
-
+	/* Creates or overwrites a folder object at stateId. Resolves after the write completes. */
 	public async writeFolderObj(stateId: string, common: ioBroker.SettableFolderObject['common']): Promise<void> {
 		const obj: ioBroker.SettableFolderObject = {
 			'type':			'folder',
@@ -189,6 +190,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/* Creates or overwrites a device object at stateId. Resolves after the write completes. */
 	public async writeDeviceObj(stateId: string, common: ioBroker.SettableDeviceObject['common']): Promise<void> {
 		const obj: ioBroker.SettableDeviceObject = {
 			'type':			'device',
@@ -199,6 +201,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/* Creates or overwrites a channel object at stateId. Resolves after the write completes. */
 	public async writeChannelObj(stateId: string, common: ioBroker.SettableChannelObject['common']): Promise<void> {
 		const obj: ioBroker.SettableChannelObject = {
 			'type':			'channel',
@@ -305,17 +308,20 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/* Returns the ioBroker state object for stateId, or null if missing or not of type 'state'. */
 	public async readStateObject(stateId: string): Promise<ioBroker.StateObject | null> {
 		const obj = await this.getForeignObjectAsync(stateId) ?? null;
 		return (obj?.type === 'state') ? obj : null;
 	}
 
 
+	/* Writes a raw ioBroker state. Resolves after the write completes. */
 	public async writeState(stateId: string, state: ioBroker.SettableState): Promise<void> {
 		await this.setForeignStateAsync(stateId, state);
 	}
 
 
+	/* Returns the current ioBroker state for stateId, or null if not found. */
 	public async readState(stateId: string): Promise<ioBroker.State | null> {
 		const  state = await this.getForeignStateAsync(stateId);
 		return state ?? null;
@@ -343,6 +349,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/* Removes spec from the dispatch list for spec.stateId; unsubscribes from ioBroker when the last spec is removed. */
 	public async unsubscribe(spec: StateChangeOpts): Promise<void> {
 		const stateId  = spec.stateId;
 		const specs		= (this.stateChangeSpecs[stateId]  ??  []).filter((s) => (s !== spec));
@@ -369,6 +376,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
+	/* Dispatches a state-change event to all registered specs for stateId, filtering by val/ack if specified. */
 	private async onChange(stateId: string, { val, ack, ts }: { val: ValType, ack: boolean, ts: number }): Promise<void> {
 		const specs = this.stateChangeSpecs[stateId];
 		if (! specs) {
@@ -386,7 +394,7 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/** Callback runs under the shared mutex, serialized with state-change dispatch. */
+	/* Schedules cb under the shared mutex, serialized with state-change dispatch. */
 	public setTimeoutAsync(cb: () => Promise<void>, ms: number): ioBroker.Timeout {
 		return this.setTimeout(() => {
 			this.mutex.runExclusive(async () => {
@@ -398,7 +406,7 @@ export class IoAdapter extends Adapter {
 		}, ms) ?? null;
 	}
 
-	/** Callback runs under the shared mutex, serialized with state-change dispatch. */
+	/* Schedules a recurring cb under the shared mutex, serialized with state-change dispatch. */
 	public setIntervalAsync(cb: () => Promise<void>, ms: number): ioBroker.Interval {
 		return this.setInterval(() => {
 			this.mutex.runExclusive(async () => {

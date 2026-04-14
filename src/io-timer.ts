@@ -7,6 +7,7 @@ export type TimerNow	= ()					=> number;
 
 type TimerCb = () => void | Promise<void>;
 
+/* Options for scheduling a timer; at least one of timeoutMs or intervalMs must be provided. */
 export type TimerOpts = {
 	name:			string,
 	cb:				TimerCb,
@@ -15,13 +16,13 @@ export type TimerOpts = {
 } & ({ timeoutMs: number } | { intervalMs: number });
 
 
-// Timer — caller owns scheduling; use clearTimer() to cancel before destroy
+/* Caller must call clearTimer() before destroy to cancel pending callbacks. */
 export class Timer {
-	// Injectable by tests; replace via configure() before first use
-	public static setTimer:			SetTimer			= setTimer;
-	public static clearTimer:		ClearTimer			= clearTimer;
-	public static now:				TimerNow			= now;
+	public static setTimer:		SetTimer	= setTimer;		// injectable by tests via configure()
+	public static clearTimer:	ClearTimer	= clearTimer;	// injectable by tests via configure()
+	public static now:			TimerNow	= now;			// injectable by tests via configure()
 
+	/* Replaces the default setTimer/clearTimer/now implementations. Must be called before first Timer use. */
 	public static configure(timerConfig = { setTimer, clearTimer, now }) {
 		Timer.setTimer		= timerConfig.setTimer;
 		Timer.clearTimer	= timerConfig.clearTimer;
@@ -30,12 +31,13 @@ export class Timer {
 
 	public readonly	name:	string;
 	public readonly	cb:		TimerCb;
-	public expireTs:		number;
-	public timeoutMs:		number | null;
-	public intervalMs:		number | null;
-	public timeoutId:		ioBroker.Timeout	= null;
-	public intervalId:		ioBroker.Interval	= null;
+	public expireTs:		number;						// absolute epoch-ms when the next fire is expected
+	public timeoutMs:		number | null;				// one-shot delay; null if not set
+	public intervalMs:		number | null;				// recurring period; null if not set
+	public timeoutId:		ioBroker.Timeout	= null;	// handle returned by setTimeoutAsync
+	public intervalId:		ioBroker.Interval	= null;	// handle returned by setIntervalAsync
 
+	/* Clamps timeoutMs/intervalMs to [0, 0x7FFFFFFF]; sets expireTs based on the active timing mode. */
 	constructor(opts: TimerOpts) {
 		let { timeoutMs, intervalMs } = opts;
 		this.name	= opts.name;
@@ -74,14 +76,17 @@ export class Timer {
 
 
 
+/* Returns current wall-clock time in epoch-ms. */
 function now(): number {
 	return Date.now();
 }
 
 
-// When both timeoutMs and intervalMs are set, the timeout fires first; the interval
-// starts only after the timeout callback resolves. cb() may call clearTimer() on
-// the same timer — nulling the id before starting the interval guards against that.
+/*
+ * Schedules the timer described by opts. If both timeoutMs and intervalMs are set,
+ * the timeout fires first and the interval starts only after the timeout callback resolves.
+ * Returns the Timer instance with all scheduling handles populated.
+ */
 function setTimer(opts: TimerOpts): Timer {
 	const adapter	= IoAdapter.this;
 	const timer		= new Timer(opts);
@@ -108,6 +113,7 @@ function setTimer(opts: TimerOpts): Timer {
 }
 
 
+/* Cancels any pending timeout and interval on timer; nulls both handles. Returns null. */
 function clearTimer(timer: Timer | null): null {
 	const adapter = IoAdapter.this;
 
