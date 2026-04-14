@@ -3,8 +3,10 @@ import { AnyState }							from './io-state';
 import { Timer }							from './io-timer';
 
 
-/** Reactive operator: subclasses implement execute() to respond to input state changes.
- *  Caller (IoEngine) owns the onTrigger() call lifecycle; subclasses own setup() and execute(). */
+/*
+ * Reactive operator: subclasses implement execute() to respond to input state changes.
+ * Caller (IoEngine) owns the onTrigger() call lifecycle; subclasses own setup() and execute().
+ */
 export abstract class IoOperator {
 	private static				live								= true;
 	private						initialized							= false;
@@ -13,9 +15,12 @@ export abstract class IoOperator {
 	protected		readonly	outputStates:	readonly AnyState[];	// written in execute(); registered in state.writtenByOperators
 	protected		readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be initialized before first onTrigger()
 
+	/* Sets the live flag; when false, IoEngine runs in history-replay mode. */
 	public static setLive(v: boolean): void	{ IoOperator.live = v;		}
+	/* Returns true when the engine is running against live state (not history replay). */
 	public static isLive(): boolean			{ return IoOperator.live;	}
 
+	/* Registers this operator in triggerOperators/writtenByOperators of the relevant states. */
 	constructor(inputStates: readonly AnyState[], outputStates: readonly AnyState[], watchedStates: readonly AnyState[]) {
 		this.watchedStates	= watchedStates;
 		this.inputStates	= inputStates;
@@ -25,14 +30,17 @@ export abstract class IoOperator {
 		for (const output of this.outputStates )	{ output.writtenByOperators.push(this); }
 	}
 
-	/** Override to perform async setup before the first execute(). Return false to defer setup to the next trigger. */
+	/* Override to perform async setup before the first execute(). Return false to defer setup to the next trigger. */
 	protected setup(): Promise<boolean> | boolean { return true; }
 
+	/* Invoked on each trigger. Precondition: all states are initialized (ts > 0). May be async or sync. */
 	protected abstract execute(trigger: AnyState): Promise<void> | void;
 
-	/** Called by IoState.onStateChange() when a triggering input state changes.
-	 *  Resolves after execute() completes. If setup() returns false, execute() is skipped
-	 *  and setup() will be retried on the next trigger. */
+	/*
+	 * Called by IoState.onStateChange() when a triggering input state changes.
+	 * Resolves after execute() completes. If setup() returns false, execute() is skipped
+	 * and setup() will be retried on the next trigger.
+	 */
 	public async onTrigger(trigger: AnyState): Promise<void> {
 		if (! this.initialized) {
 			// guard: all states must have been fetched (ts > 0) before first execute

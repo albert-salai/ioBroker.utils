@@ -7,9 +7,7 @@ import { sortBy }					from './io-util';
 import { sprintf }					from 'sprintf-js';
 
 
-// ~~~~~~~~
-// IoEngine
-// ~~~~~~~~
+/* Orchestrates history replay and live-mode state seeding, SQL integration, and timer lifecycle. */
 export class IoEngine {
 	private static 		ReadDaysLimit							= 7*6;						// 6 weeks
 
@@ -24,11 +22,13 @@ export class IoEngine {
 	private 			flushSize								= 35000;		// calibrated to ~1 sec flush time
 	private				flushed:			Promise<void>		= Promise.resolve();
 
+	/* Initializes internal state; caller must call start() to seed states and activate subscriptions. */
 	public constructor() {
 		this.logf.debug('%-15s %-15s %-10s', this.constructor.name, 'constructor()', '');
 	}
 
 
+	/* Seeds all registered IoStates and activates subscriptions. If historyDays > 0, runs SQL history replay first. Resolves after live mode is fully active. */
 	public async start(historyDays: number): Promise<void> {
 		const adapter	= this.adapter;
 		const allStates	= Object.values(IoStates.registry).sort(sortBy('stateId'));
@@ -83,6 +83,7 @@ export class IoEngine {
 	}
 
 
+	/* Runs the full history-replay pipeline: seeds initial values, replays SQL rows, advances simulated clock, flushes write cache. */
 	private async process_hist(historyDays: number, allStates: AnyState[]): Promise<void> {
 		const adapter = this.adapter;
 		this.logf.debug('%-15s %-15s %-10s %-50s %.1f days', this.constructor.name, 'process_hist()', '', '...', historyDays);
@@ -160,6 +161,7 @@ export class IoEngine {
 	}
 
 
+	/* Seeds each IoState with its initial value: last-before-window > first-in-window > current ioBroker state. Throws if no value can be found. */
 	private async hist_init(fromTs: number, ioStates: AnyState[]): Promise<void> {
 		this.logf.debug('%-15s %-15s %-10s %-50s', this.constructor.name, 'hist_init()', '', '...');
 		const sqlOpts = { 'ack': true, 'isNull': false };
@@ -206,6 +208,7 @@ export class IoEngine {
 	}
 
 
+	/* Reads SQL history for srcStates in adaptive-size chunks and replays each row via onStateChange. Resolves after all rows are processed. */
 	private async hist_exec(fromTs: number, srcStates: Record<string, AnyState>): Promise<void> {
 		const srcStateIds = Object.keys(srcStates).sort();
 
@@ -262,6 +265,7 @@ export class IoEngine {
 	}
 
 
+	/* Advances the simulated clock and calls onStateChange for each row in order. Throws if rows arrive out of order. */
 	private async hist_execRows(srcRows: SqlHistoryRow[], srcStates: Record<string, AnyState>): Promise<void> {
 		for (const row of srcRows) {
 			if		(row.ts < this.histNow)  { this.logf.error('%-15s %-15s %-10s %-50s %s < %s', this.constructor.name, 'hist_exec()', 'row', row.id, dateStr(row.ts), dateStr(this.histNow)); throw new Error(''); }
@@ -276,6 +280,7 @@ export class IoEngine {
 	}
 
 
+	/* IoStates.writeFn replacement for history replay: propagates val via onStateChange and buffers non-writable states for SQL insert. Flushes when the cache exceeds flushSize. */
 	private async hist_write(ioState: AnyState, val: ValType): Promise<void> {
 		const ts = this.histNow;
 		await ioState.onStateChange(val, ts);		// recursion: onStateChange() --> op.onTrigger() --> op.execute() --> IoStates.writeFn() --> hist_write() --> onStateChange()
@@ -291,6 +296,7 @@ export class IoEngine {
 	}
 
 
+	/* Drains histWriteCache to SQL. Adjusts flushSize based on elapsed time to target FlushMs per flush. */
 	private async hist_flush(): Promise<void> {
 		const history		= this.histWriteCache.splice(0, this.histWriteCache.length);
 		const flushFromTs	= history          [0]?.ts;
@@ -308,6 +314,7 @@ export class IoEngine {
 	}
 
 
+	/* Timer.setTimer replacement for history replay: stores timer in histTimers sorted by expireTs. */
 	private hist_setTimer(opts: TimerOpts): Timer {
 		const timer = new Timer(opts);
 		this.histTimers.push(timer);
@@ -316,6 +323,7 @@ export class IoEngine {
 	}
 
 
+	/* Timer.clearTimer replacement for history replay: removes timer from histTimers. Logs an error if not found. */
 	private hist_clearTimer(timer: Timer | null): null {
 		if (timer) {
 			const idx = this.histTimers.indexOf(timer);
@@ -329,11 +337,13 @@ export class IoEngine {
 	}
 
 
+	/* Timer.now replacement for history replay: returns the simulated clock value. */
 	private hist_now() {
 		return this.histNow;
 	}
 
 
+	/* Fires all histTimers with expireTs in (histNow, nextNow], then sets histNow = nextNow. Reschedules interval timers after each fire. */
 	private async hist_setNow(nextNow: number): Promise<void> {
 		// fire all offline timers whose expireTs falls within (histNow, nextNow]
 		while (this.histTimers[0]) {
@@ -364,7 +374,7 @@ export class IoEngine {
 	}
 
 
-	/** Must be called after Timer.configure() to activate converted timers. */
+	/* Converts remaining histTimers to live timers. Fires immediately if already expired. Must be called after Timer.configure(). */
 	private async hist_convertTimers(): Promise<void> {
 		// convert offline timers to live timers; fire immediately if already expired
 		for (const timer of this.histTimers) {
@@ -387,6 +397,7 @@ export class IoEngine {
 	}
 
 
+	/* Reads the ioBroker SQL adapter config and connects. Returns false if the adapter is missing or is not mysql/mariadb. */
 	private async sql_connect(): Promise<boolean> {
 		// only mysql/mariadb is supported; other dbtypes return false rather than throw
 		const instanceId	= `system.adapter.${this.adapter.historyId}`;
@@ -404,6 +415,7 @@ export class IoEngine {
 	}
 
 
+	/* Creates folder objects for every non-leaf path segment of states under this adapter's namespace. */
 	private async add_folders(ioStates: AnyState[]): Promise<void> {
 		const folderIds: string[] = [];
 
