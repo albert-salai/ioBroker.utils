@@ -1,6 +1,6 @@
 # IoEngine — Live Mode
 
-Active when `IoOperator.isLive() === true`. Entered after history mode completes, or directly via `start(historyDays = 0)`.
+Entered after `IoHistoryEngine.run()` completes, or directly via `start(historyDays = 0)`.
 
 ## Purpose
 
@@ -9,13 +9,16 @@ Processes real-time ioBroker state changes and routes operator outputs back to i
 ## Startup Sequence
 
 ```
-// Only when skipping history mode (historyDays = 0):
-Timer.configure()
-for each ioState: ioState.seed(currentVal, currentTs)   — seed initial values from ioBroker
+// Always (IoEngine.start(), after IoHistoryEngine.run() or when historyDays = 0):
+Timer.configure()                          — restore live JS timer implementations
 
-// Always (whether coming from history mode or starting directly):
-IoStates.writeFn = adapter.writeState                   — install live write handler
-for each ioState: adapter.subscribe(stateId, ack=true)  — start listening for state changes
+// Only when skipping history mode (historyDays = 0, or IoHistoryEngine returned false):
+await Promise.all(allStates.map(readState))  — seed initial values in parallel from ioBroker
+  // throws if any state has val == null, missing state, or future ts (clock skew)
+
+// Always:
+IoStates.writeFn = adapter.writeState      — install live write handler
+await Promise.all(allStates.map(subscribe)) — subscribe all states in parallel (ack=true)
 ```
 
 ## Clock
@@ -66,20 +69,15 @@ The written state immediately triggers the subscribed ack change handler, which 
 
 ## Operator Contract
 
-`IoOperator.isLive()` returns `true` — operators may perform side effects and external calls.
+Operators may perform side effects and external calls in live mode.
 
-`onTrigger()` verifies `ts > 0` for all states (`inputStates + outputStates + watchedStates`) before proceeding. If any state has not yet received a value (`ts === 0`), `setup()` is skipped and retried on the next trigger. Once all states are ready, `setup()` runs once; if it returns `false`, `execute()` is skipped and `setup()` is retried. Otherwise `execute()` is called on every trigger.
+`onTrigger()` calls `setup()` once on the first trigger; if `setup()` returns `false`, `execute()` is skipped and `setup()` is retried on the next trigger. Once `setup()` returns `true`, `execute()` is called on every trigger.
 
 ```
   trigger: state change
           |
           v
-  all states ts > 0? --no--> skip, retry on next trigger
-          |                          ^
-         yes                         |
-          |                          |
-          v                          |
-  setup already run? --no--> setup() --returns false--+
+  setup already run? --no--> setup() --returns false--> skip, retry on next trigger
           |
          yes
           |
@@ -91,4 +89,4 @@ The written state immediately triggers the subscribed ack change handler, which 
 ```
 
 ---
-*Last updated: 2026-03-16*
+*Last updated: 2026-04-15*

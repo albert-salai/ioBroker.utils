@@ -56,10 +56,7 @@ abstract class IoOperator {
   protected abstract execute(trigger: AnyState): Promise<void> | void
 
   async onTrigger(trigger: AnyState): Promise<void>
-    // called by IoState.onStateChange(); verifies all states have ts>0, calls setup() once, then execute()
-
-  static setLive(v: boolean): void
-  static isLive(): boolean   						// false during history
+    // called by IoState.onStateChange(); calls setup() once then execute()
 }
 ```
 
@@ -67,7 +64,7 @@ abstract class IoOperator {
 
 ## IoEngine — `/opt/iobroker/my_modules/ioBroker.utils/src/io-engine.ts`
 
-Orchestrates startup, history replay, and live state subscriptions.
+Orchestrates startup: delegates history replay to `IoHistoryEngine`, then seeds live state and activates subscriptions.
 
 ```ts
 class IoEngine {
@@ -75,11 +72,29 @@ class IoEngine {
 
   // Main entry point — call from adapter's onReady()
   async start(historyDays: number): Promise<void>
-    // historyDays > 0: connects SQL, replays history, then goes live
-    // historyDays = 0: initializes states from current ioBroker values only
-
+    // historyDays > 0: runs IoHistoryEngine.run(), then activates live mode
+    // historyDays = 0: seeds states from current ioBroker values, then activates live mode
+    // throws if any state has no value (val == null, future ts, or missing)
 }
 ```
 
 ---
-*Last updated: 2026-03-16*
+
+## IoHistoryEngine — `/opt/iobroker/my_modules/ioBroker.utils/src/io-history-engine.ts`
+
+Runs the full history-replay pipeline. Single-use — construct and call `run()` once.
+
+```ts
+class IoHistoryEngine {
+  constructor(adapter: IoAdapter, logf: typeof IoAdapter.logf)
+
+  async run(historyDays: number, allStates: AnyState[]): Promise<boolean>
+    // Returns false if SQL is unavailable (no-op, caller falls back to live seeding)
+    // Returns true after full replay: seeds states, replays SQL rows, flushes writes,
+    // converts offline timers, syncs any src states that changed during replay
+    // Caller must call Timer.configure() after run() to restore live timer implementations
+}
+```
+
+---
+*Last updated: 2026-04-15*
