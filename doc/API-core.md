@@ -34,8 +34,8 @@ class IoAdapter extends Adapter {
   subscribeOnce(spec): Promise<void>         // auto-unsubscribes after first match
 
   // Async timer helpers — callbacks run inside mutex
-  setTimeoutAsync(cb: () => Promise<void>, ms): ioBroker.Timeout | null
-  setIntervalAsync(cb: () => Promise<void>, ms): ioBroker.Interval | null
+  setTimeoutAsync(cb: () => Promise<void>, ms): ioBroker.Timeout
+  setIntervalAsync(cb: () => Promise<void>, ms): ioBroker.Interval
 }
 ```
 
