@@ -1,6 +1,5 @@
-import { IoAdapter, dateStr, valStr }		from './io-adapter';
-import { AnyState }							from './io-state';
-import { Timer }							from './io-timer';
+import { IoAdapter }		from './io-adapter';
+import { AnyState }		from './io-state';
 
 
 /*
@@ -8,17 +7,11 @@ import { Timer }							from './io-timer';
  * Caller (IoEngine) owns the onTrigger() call lifecycle; subclasses own setup() and execute().
  */
 export abstract class IoOperator {
-	private static				live								= true;
-	private						initialized							= false;
+	private						ready								= false;
 	protected		readonly	logf								= IoAdapter.logf;
 	public			readonly	inputStates:	readonly AnyState[];	// trigger execute() on change; registered in state.triggerOperators
 	protected		readonly	outputStates:	readonly AnyState[];	// written in execute(); registered in state.writtenByOperators
-	protected		readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be initialized before first onTrigger()
-
-	/* Sets the live flag; when false, IoEngine runs in history-replay mode. */
-	public static setLive(v: boolean): void	{ IoOperator.live = v;		}
-	/* Returns true when the engine is running against live state (not history replay). */
-	public static isLive(): boolean			{ return IoOperator.live;	}
+	protected		readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be ready before first onTrigger()
 
 	/* Registers this operator in triggerOperators/writtenByOperators of the relevant states. */
 	constructor(inputStates: readonly AnyState[], outputStates: readonly AnyState[], watchedStates: readonly AnyState[]) {
@@ -33,7 +26,7 @@ export abstract class IoOperator {
 	/* Override to perform async setup before the first execute(). Return false to defer setup to the next trigger. */
 	protected setup(): Promise<boolean> | boolean { return true; }
 
-	/* Invoked on each trigger. Precondition: all states are initialized (ts > 0). May be async or sync. */
+	/* Invoked on each trigger. Precondition: all states are ready (ts > 0). May be async or sync. */
 	protected abstract execute(trigger: AnyState): Promise<void> | void;
 
 	/*
@@ -42,28 +35,13 @@ export abstract class IoOperator {
 	 * and setup() will be retried on the next trigger.
 	 */
 	public async onTrigger(trigger: AnyState): Promise<void> {
-		if (! this.initialized) {
-			// guard: all states must have been fetched (ts > 0) before first execute
-			const notInitialized = this.inputStates.concat(this.outputStates, this.watchedStates).filter(state => (state.ts <= 0));
-			if (notInitialized.length > 0) {
-				for (const state of notInitialized) {
-					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'setup()', 'no init', state.stateId,  dateStr(state.ts ), valStr(state.val ));
-				}
-				throw new Error(`${this.constructor.name}: onTrigger(): some states not initialized`);
-			}
-
-			// warn if any input carries a future timestamp (clock skew / bad data)
-			for (const input of this.inputStates) {
-				if (input.ts > Timer.now()) {
-					this.logf.warn('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'setup()', 'invalid ts', input.stateId, dateStr(input.ts), valStr(input.val));
-				}
-			}
-
-			this.initialized = await this.setup();
+		// get ready
+		if (! this.ready) {
+			this.ready = await this.setup();
 		}
 
-		// skip execute if setup() deferred (initialized remains false until next trigger)
-		if (this.initialized) {
+		// execute if ready
+		if (this.ready) {
 			await this.execute(trigger);
 		}
 	}

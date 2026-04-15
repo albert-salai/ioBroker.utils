@@ -78,11 +78,11 @@ export class IoAdapter extends Adapter {
 	private			saveConfig:			boolean;
 	// Stubs replaced with real implementations in the `ready` handler once `this.log` and `this.namespace` are available
 	public logf = {
-		'silly':	(_fmt: string, ..._args: unknown[]): void => {},
-		'info':		(_fmt: string, ..._args: unknown[]): void => {},
-		'debug':	(_fmt: string, ..._args: unknown[]): void => {},
-		'warn':		(_fmt: string, ..._args: unknown[]): void => {},
-		'error':	(_fmt: string, ..._args: unknown[]): void => {},
+		'silly':	(_fmt: string, ..._args: unknown[]): void => { /* noop */ },
+		'info':		(_fmt: string, ..._args: unknown[]): void => { /* noop */ },
+		'debug':	(_fmt: string, ..._args: unknown[]): void => { /* noop */ },
+		'warn':		(_fmt: string, ..._args: unknown[]): void => { /* noop */ },
+		'error':	(_fmt: string, ..._args: unknown[]): void => { /* noop */ },
 	};
 
 	/* Returns the singleton IoAdapter instance. */
@@ -174,10 +174,10 @@ export class IoAdapter extends Adapter {
 
 
 	/* Override to perform adapter startup after ioBroker connection is established. */
-	protected async onReady(): Promise<void> {}
+	protected async onReady(): Promise<void> { /* noop */ }
 
 	/* Override to perform cleanup before the adapter process exits. */
-	protected async onUnload(): Promise<void> {}
+	protected async onUnload(): Promise<void> { /* noop */ }
 
 	/* Creates or overwrites a folder object at stateId. Resolves after the write completes. */
 	public async writeFolderObj(stateId: string, common: ioBroker.SettableFolderObject['common']): Promise<void> {
