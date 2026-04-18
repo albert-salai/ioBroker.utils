@@ -1,9 +1,9 @@
 import { IoAdapter }		from './io-adapter';
 
 
-export type SetTimer	= (opts:  TimerOpts)	=> Timer | null;
-export type ClearTimer	= (timer: Timer | null)	=> null;
-export type TimerNow	= ()					=> number;
+type SetTimer	= (opts:  TimerOpts)		=> IoTimer | null;
+type ClearTimer	= (timer: IoTimer | null)	=> null;
+type TimerNow	= ()						=> number;
 
 type TimerCb = () => void | Promise<void>;
 
@@ -16,26 +16,83 @@ export type TimerOpts = {
 } & ({ timeoutMs: number } | { intervalMs: number });
 
 
-/* Caller must call clearTimer() before destroy to cancel pending callbacks. */
-export class Timer {
-	public static setTimer:		SetTimer	= setTimer;		// injectable by tests via configure()
-	public static clearTimer:	ClearTimer	= clearTimer;	// injectable by tests via configure()
-	public static now:			TimerNow	= now;			// injectable by tests via configure()
+/* Returns current wall-clock time in epoch-ms. */
+function now(): number {
+	return Date.now();
+}
 
-	/* Replaces the default setTimer/clearTimer/now implementations. Must be called before first Timer use. */
-	public static configure(timerConfig = { setTimer, clearTimer, now }) {
-		Timer.setTimer		= timerConfig.setTimer;
-		Timer.clearTimer	= timerConfig.clearTimer;
-		Timer.now			= timerConfig.now;
+
+/*
+ * Schedules the timer described by opts. If both timeoutMs and intervalMs are set,
+ * the timeout fires first and the interval starts only after the timeout callback resolves.
+ * Returns the Timer instance with all scheduling handles populated.
+ */
+function setTimer(opts: TimerOpts): IoTimer {
+	const adapter	= IoAdapter.this;
+	const timer		= new IoTimer(opts);
+
+	if (timer.timeoutMs !== null) {
+		timer.timeoutId = adapter.setTimeoutAsync(async () => {
+			await timer.cb();				// resolves before interval is scheduled
+			timer.timeoutId = null;
+
+			if (timer.intervalMs !== null) {
+				timer.intervalId = adapter.setIntervalAsync(async () => {
+					await timer.cb();		// cb may call clearTimer(); intervalId read after await
+				}, timer.intervalMs) ?? null;
+			}
+		}, timer.timeoutMs) ?? null;
+
+	} else if (timer.intervalMs !== null) {
+		timer.intervalId = adapter.setIntervalAsync(async () => {
+			await timer.cb();				// cb may call clearTimer(); intervalId read after await
+		}, timer.intervalMs) ?? null;
+	}
+
+	return timer;
+}
+
+
+/* Cancels any pending timeout and interval on timer; nulls both handles. Returns null. */
+function clearTimer(timer: IoTimer | null): null {
+	const adapter = IoAdapter.this;
+
+	if (timer) {
+		if (timer.timeoutId !== null) {
+			adapter.clearTimeout(timer.timeoutId);
+			timer.timeoutId = null;
+		}
+
+		if (timer.intervalId !== null) {
+			adapter.clearInterval(timer.intervalId);
+			timer.intervalId = null;
+		}
+	}
+
+	return null;
+}
+
+
+/* Caller must call clearTimer() before destroy to cancel pending callbacks. */
+export class IoTimer {
+	public static setTimer:		SetTimer	= setTimer;
+	public static clearTimer:	ClearTimer	= clearTimer;
+	public static now:			TimerNow	= now;
+
+	/* Replaces the default setTimer/clearTimer/now implementations. Must be called before first IoTimer use. */
+	public static configure(cfg: { setTimer: SetTimer; clearTimer: ClearTimer; now: TimerNow } = { setTimer, clearTimer, now }) {
+		IoTimer.setTimer	= cfg.setTimer;
+		IoTimer.clearTimer	= cfg.clearTimer;
+		IoTimer.now			= cfg.now;
 	}
 
 	public readonly	name:	string;
 	public readonly	cb:		TimerCb;
-	public expireTs:		number;						// absolute epoch-ms when the next fire is expected
-	public timeoutMs:		number | null;				// one-shot delay; null if not set
-	public intervalMs:		number | null;				// recurring period; null if not set
-	public timeoutId:		ioBroker.Timeout	= null;	// handle returned by setTimeoutAsync
-	public intervalId:		ioBroker.Interval	= null;	// handle returned by setIntervalAsync
+	public expireTs:		number;							// absolute epoch-ms when the next fire is expected
+	public timeoutMs:		number | null;					// one-shot delay; null if not set
+	public intervalMs:		number | null;					// recurring period; null if not set
+	public timeoutId:		ioBroker.Timeout	= null;		// handle returned by setTimeoutAsync
+	public intervalId:		ioBroker.Interval	= null;		// handle returned by setIntervalAsync
 
 	/* Clamps timeoutMs/intervalMs to [0, 0x7FFFFFFF]; sets expireTs based on the active timing mode. */
 	constructor(opts: TimerOpts) {
@@ -67,67 +124,8 @@ export class Timer {
 		this.timeoutMs	= timeoutMs  ?? null;
 		this.intervalMs	= intervalMs ?? null;
 
-		if		(this.timeoutMs  !== null)		{ this.expireTs = Timer.now() + this.timeoutMs;		}
-		else if (this.intervalMs !== null)		{ this.expireTs = Timer.now() + this.intervalMs;	}
+		if		(this.timeoutMs  !== null)		{ this.expireTs = IoTimer.now() + this.timeoutMs;	}
+		else if (this.intervalMs !== null)		{ this.expireTs = IoTimer.now() + this.intervalMs;	}
 		else									{ this.expireTs = 0;								}
 	}
-}
-
-
-
-
-/* Returns current wall-clock time in epoch-ms. */
-function now(): number {
-	return Date.now();
-}
-
-
-/*
- * Schedules the timer described by opts. If both timeoutMs and intervalMs are set,
- * the timeout fires first and the interval starts only after the timeout callback resolves.
- * Returns the Timer instance with all scheduling handles populated.
- */
-function setTimer(opts: TimerOpts): Timer {
-	const adapter	= IoAdapter.this;
-	const timer		= new Timer(opts);
-
-	if (timer.timeoutMs !== null) {
-		timer.timeoutId = adapter.setTimeoutAsync(async () => {
-			await timer.cb();				// resolves before interval is scheduled
-			timer.timeoutId = null;
-
-			if (timer.intervalMs !== null) {
-				timer.intervalId = adapter.setIntervalAsync(async () => {
-					await timer.cb();		// cb may call clearTimer(); intervalId read after await
-				}, timer.intervalMs) ?? null;
-			}
-		}, timer.timeoutMs) ?? null;
-
-	} else if (timer.intervalMs !== null) {
-		timer.intervalId = adapter.setIntervalAsync(async () => {
-			await timer.cb();				// cb may call clearTimer(); intervalId read after await
-		}, timer.intervalMs) ?? null;
-	}
-
-	return timer;
-}
-
-
-/* Cancels any pending timeout and interval on timer; nulls both handles. Returns null. */
-function clearTimer(timer: Timer | null): null {
-	const adapter = IoAdapter.this;
-
-	if (timer) {
-		if (timer.timeoutId !== null) {
-			adapter.clearTimeout(timer.timeoutId);
-			timer.timeoutId = null;
-		}
-
-		if (timer.intervalId !== null) {
-			adapter.clearInterval(timer.intervalId);
-			timer.intervalId = null;
-		}
-	}
-
-	return null;
 }
