@@ -8,6 +8,9 @@ import { sprintf }										from 'sprintf-js';
 
 /* Runs the full history-replay pipeline for IoEngine. Caller must construct and call run(); instance is single-use. */
 export class IoHistoryEngine {
+	private readonly	adapter	= IoAdapter.this;
+	private readonly	logf	= IoAdapter.logf;
+
 	private static 		ReadDaysLimit							= 7*6;						// 6 weeks
 
 	private				histNow									= 0;			// simulated clock during history replay
@@ -18,12 +21,6 @@ export class IoHistoryEngine {
 	private 			flushSize								= 35000;		// calibrated to ~1 sec flush time
 	private				flushed:			Promise<void>		= Promise.resolve();
 	private readonly	sql										= new IoSql();
-
-	constructor(
-		private readonly adapter:	IoAdapter,
-		private readonly logf:		typeof IoAdapter.logf,
-	) {}
-
 
 	/* Connects to the SQL adapter. Returns false if the adapter is missing or is not mysql/mariadb. */
 	private async sql_connect(): Promise<boolean> {
@@ -44,20 +41,13 @@ export class IoHistoryEngine {
 
 
 	/* Seeds initial values, replays SQL rows, advances simulated clock, flushes write cache. Returns false if SQL is unavailable. */
-	public async run(
-		historyDays:	number,
-		allStates:		AnyState[],
-	): Promise<boolean> {
+	public async run(historyDays: number, allStates: AnyState[]): Promise<boolean> {
 		const adapter = this.adapter;
 		this.logf.debug('%-15s %-15s %-10s %-50s %.1f days', this.constructor.name, 'run()', '', '...', historyDays);
 
 		const connected = await this.sql_connect();
 		if (!connected) {
 			return false;
-		}
-
-		if (this.adapter.config['sql-optimize']) {
-			await this.sql.optimizeTablesAsync();
 		}
 
 		const fromTs = Date.now() - 1000*3600*24*historyDays;
@@ -371,4 +361,27 @@ export class IoHistoryEngine {
 
 		this.histTimers.splice(0, this.histTimers.length);
 	}
+}
+
+
+/* Connects to the SQL adapter, runs OPTIMIZE TABLE, then disconnects. Returns false if the SQL adapter is unavailable. */
+export async function optimizeSql(): Promise<boolean> {
+	const sql = new IoSql();
+	const instanceId  = `system.adapter.${IoAdapter.this.historyId}`;
+	const instanceObj = await IoAdapter.this.getForeignObjectAsync(instanceId);
+	if (instanceObj) {
+		const { dbtype, host, port, user, password, dbname } = instanceObj.native;
+		if (       dbtype	=== 'mysql'		&&	typeof dbname	=== 'string'	&&
+			typeof host		=== 'string'	&&	typeof port		=== 'number'	&&
+			typeof user		=== 'string'	&&	typeof password	=== 'string'
+		) {
+			const connected = await sql.connect({ host, port, user, password, database: dbname });
+			if (connected) {
+				await sql.optimizeTablesAsync();
+				await sql.onUnload();
+				return true;
+			}
+		}
+	}
+	return false;
 }
