@@ -22,8 +22,7 @@ export class IoEngine {
 		await this.add_folders(allStates);
 
 		// history: replay SQL or seed from current ioBroker state
-		const historyReplayed = historyDays > 0
-			&& await new IoHistoryEngine(this.adapter, this.logf).run(historyDays, allStates);
+		const historyReplayed = (historyDays > 0)  &&  await new IoHistoryEngine().run(historyDays, allStates);
 
 		// ensure IoTimer is configured for live mode
 		IoTimer.configure();

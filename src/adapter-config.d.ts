@@ -1,7 +1,7 @@
 declare global {
 	namespace ioBroker {
+		// eslint-disable-next-line @typescript-eslint/no-empty-object-type
 		interface AdapterConfig {
-			'sql-optimize':		boolean
 		}
 	}
 }
