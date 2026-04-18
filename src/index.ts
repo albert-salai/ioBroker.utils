@@ -13,8 +13,23 @@ export type { AnyState }				from './io-state';
 export { IoOperator }					from './io-operator';
 
 // timer: thin adapter over ioBroker's setTimeout/clearTimeout — caller must call clearTimer() to cancel
-export { Timer }						from './io-timer';
-export type { TimerOpts, SetTimer, ClearTimer, TimerNow }	from './io-timer';
+export { IoTimer }						from './io-timer';
+export type { TimerOpts }	from './io-timer';
 
 // math/signal utilities: IIR filter, parabola fit, Magnus saturation, Newton-Raphson, RLS
 export { sortBy, parabola, Magnus, IIR, newtonRaphson, RLS }	from './io-util';
+
+// generic reactive operators
+export { OpAutoOnOff }							from './operators/OpAutoOnOff';
+export { OpBiQuadFilter }						from './operators/OpBiQuadFilter';
+export { OpDewpoint }							from './operators/OpDewpoint';
+export { OpDiff }								from './operators/OpDiff';
+export { OpFollowSwitch }						from './operators/OpFollowSwitch';
+export { OpIfThenElse, type IfThenElseOpts }	from './operators/OpIfThenElse';
+export { OpLowerBound }							from './operators/OpLowerBound';
+export { OpMean }								from './operators/OpMean';
+export { OpMovingAvg }							from './operators/OpMovingAvg';
+export { OpOnOffDelay }							from './operators/OpOnOffDelay';
+export { OpPartPress }							from './operators/OpPartPress';
+export { OpSchmittTrig }						from './operators/OpSchmittTrig';
+export { OpSumN }								from './operators/OpSumN';

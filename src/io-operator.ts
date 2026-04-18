@@ -1,4 +1,4 @@
-import { IoAdapter }		from './io-adapter';
+import { IoAdapter }	from './io-adapter';
 import { AnyState }		from './io-state';
 
 
@@ -7,11 +7,11 @@ import { AnyState }		from './io-state';
  * Caller (IoEngine) owns the onTrigger() call lifecycle; subclasses own setup() and execute().
  */
 export abstract class IoOperator {
-	private						ready								= false;
-	protected		readonly	logf								= IoAdapter.logf;
-	public			readonly	inputStates:	readonly AnyState[];	// trigger execute() on change; registered in state.triggerOperators
-	protected		readonly	outputStates:	readonly AnyState[];	// written in execute(); registered in state.writtenByOperators
-	protected		readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be ready before first onTrigger()
+	protected	readonly	inputStates:	readonly AnyState[];	// trigger execute() on change; registered in state.triggerOperators
+	protected	readonly	outputStates:	readonly AnyState[];	// written in execute(); registered in state.writtenByOperators
+	protected	readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be ready before first onTrigger()
+	protected	readonly	logf	= IoAdapter.logf;
+	private					ready	= false;
 
 	/* Registers this operator in triggerOperators/writtenByOperators of the relevant states. */
 	constructor(inputStates: readonly AnyState[], outputStates: readonly AnyState[], watchedStates: readonly AnyState[]) {

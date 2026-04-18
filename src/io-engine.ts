@@ -1,6 +1,6 @@
 import { IoAdapter, StateChange, ValType, dateStr, valStr }		from './io-adapter';
 import { IoStates, AnyState }		from './io-state';
-import { Timer }					from './io-timer';
+import { IoTimer }					from './io-timer';
 import { sortBy }					from './io-util';
 import { IoHistoryEngine }			from './io-history-engine';
 
@@ -25,8 +25,8 @@ export class IoEngine {
 		const historyReplayed = historyDays > 0
 			&& await new IoHistoryEngine(this.adapter, this.logf).run(historyDays, allStates);
 
-		// set or restore live Timer implementations (IoHistoryEngine may have replaced them)
-		Timer.configure();
+		// ensure IoTimer is configured for live mode
+		IoTimer.configure();
 
 		if (! historyReplayed) {
 			let notInitialized = 0;
@@ -36,7 +36,7 @@ export class IoEngine {
 				if (state?.val == null) {
 					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', state === null ? 'no state' : 'null val', ioState.stateId, dateStr(ioState.ts), valStr(ioState.val));
 					notInitialized++;
-				} else if (state.ts > Timer.now()) {
+				} else if (state.ts > IoTimer.now()) {
 					// future ts indicates clock skew or bad data
 					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'future ts', ioState.stateId, dateStr(state.ts), valStr(state.val));
 					notInitialized++;

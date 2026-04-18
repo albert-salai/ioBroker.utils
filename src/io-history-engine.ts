@@ -1,9 +1,9 @@
-import { IoAdapter, ValType, dateStr, valStr }	from './io-adapter';
-import { IoSql, SqlHistoryRow, IoWriteCacheVal }	from './io-sql';
-import { IoStates, AnyState }					from './io-state';
-import { Timer, TimerOpts }						from './io-timer';
-import { sortBy }								from './io-util';
-import { sprintf }								from 'sprintf-js';
+import { IoAdapter, ValType, dateStr, valStr }			from './io-adapter';
+import { IoSql, SqlHistoryRow, IoWriteCacheVal }		from './io-sql';
+import { IoStates, AnyState }							from './io-state';
+import { IoTimer, TimerOpts }							from './io-timer';
+import { sortBy }										from './io-util';
+import { sprintf }										from 'sprintf-js';
 
 
 /* Runs the full history-replay pipeline for IoEngine. Caller must construct and call run(); instance is single-use. */
@@ -11,7 +11,7 @@ export class IoHistoryEngine {
 	private static 		ReadDaysLimit							= 7*6;						// 6 weeks
 
 	private				histNow									= 0;			// simulated clock during history replay
-	private readonly	histTimers:			Timer[]				= [];
+	private readonly	histTimers:			IoTimer[]				= [];
 	private readonly	histWriteCache:		IoWriteCacheVal[]	= [];
 	private readonly	ReadSize								= 150000;
 	private readonly	FlushMs									= 1000;
@@ -63,8 +63,8 @@ export class IoHistoryEngine {
 		const fromTs = Date.now() - 1000*3600*24*historyDays;
 		this.histNow = fromTs;
 
-		// redirect Timer and IoStates.writeFn to offline (simulated-clock) implementations
-		Timer.configure({
+		// enter simulated-clock mode: redirect IoTimer and IoStates.writeFn to offline implementations
+		IoTimer.configure({
 			'setTimer':		this.hist_setTimer  .bind(this),
 			'clearTimer':	this.hist_clearTimer.bind(this),
 			'now':			this.hist_getNow   	.bind(this),
@@ -257,7 +257,7 @@ export class IoHistoryEngine {
 	/* Fires all histTimers with expireTs in (histNow, nextNow], re-queues interval timers by advancing expireTs and re-sorting, then sets histNow = nextNow. */
 	private async hist_setNow(nextNow: number): Promise<void> {
 		// fire all offline timers whose expireTs falls within (histNow, nextNow]
-		while (this.histTimers[0]) {
+		while (this.histTimers[0] !== undefined) {
 			const timer = this.histTimers[0];
 			if (timer.expireTs > nextNow) {
 				break;
@@ -319,17 +319,17 @@ export class IoHistoryEngine {
 	}
 
 
-	/* Timer.setTimer replacement for history replay: stores timer in histTimers sorted by expireTs. */
-	private hist_setTimer(opts: TimerOpts): Timer {
-		const timer = new Timer(opts);
+	/* IoTimer.setTimer replacement for history replay: stores timer in histTimers sorted by expireTs. */
+	private hist_setTimer(opts: TimerOpts): IoTimer {
+		const timer = new IoTimer(opts);
 		this.histTimers.push(timer);
 		this.histTimers.sort(sortBy('expireTs'));
 		return timer;
 	}
 
 
-	/* Timer.clearTimer replacement for history replay: removes timer from histTimers. Logs an error if not found. */
-	private hist_clearTimer(timer: Timer | null): null {
+	/* IoTimer.clearTimer replacement for history replay: removes timer from histTimers. Logs an error if not found. */
+	private hist_clearTimer(timer: IoTimer | null): null {
 		if (timer) {
 			const idx = this.histTimers.indexOf(timer);
 			if (idx >= 0) {
@@ -342,28 +342,30 @@ export class IoHistoryEngine {
 	}
 
 
-	/* Timer.now replacement for history replay: returns the simulated clock value. */
+	/* IoTimer.now replacement for history replay: returns the simulated clock value. */
 	private hist_getNow() {
 		return this.histNow;
 	}
 
 
-	/* Converts remaining histTimers to live timers. Fires immediately if already expired. Caller must have restored live Timer.configure() first. */
+	/* Converts remaining histTimers to live timers. Fires immediately if already expired. Restores live IoTimer before firing so callbacks re-arm against the live scheduler. */
 	private async hist_convertTimers(): Promise<void> {
+		IoTimer.configure();		// exit simulated-clock mode before any cb() fires, so callbacks re-arm against the live scheduler
+
 		// convert offline timers to live timers; fire immediately if already expired
 		for (const timer of this.histTimers) {
 			const { name, cb, expireTs, intervalMs } = timer;
 			this.logf.debug('%-15s %-26s %-50s %s', this.constructor.name, 'hist_convertTimers()', `converting timer ${timer.name}`, dateStr(expireTs));
 
-			const timeoutMs = expireTs - Timer.now();
+			const timeoutMs = expireTs - IoTimer.now();
 			if (intervalMs === null) {
 				if (timeoutMs <= 0)	{	await cb();									}
-				else				{	Timer.setTimer({ name, timeoutMs, cb });	}
+				else				{	IoTimer.setTimer({ name, timeoutMs, cb });	}
 
 			} else {
 				if (timeoutMs <= 0)	{	await cb();
-										Timer.setTimer({ name,        		intervalMs, cb });	}
-				else				{	Timer.setTimer({ name, timeoutMs,	intervalMs, cb });	}
+										IoTimer.setTimer({ name,        	intervalMs, cb });	}
+				else				{	IoTimer.setTimer({ name, timeoutMs,	intervalMs, cb });	}
 			}
 		}
 

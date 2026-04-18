@@ -3,13 +3,13 @@ import { Adapter }					from '@iobroker/adapter-core';
 import { Mutex, withTimeout }		from 'async-mutex';
 import { sprintf }					from 'sprintf-js';
 import { diff as deepDiff }			from 'deep-diff';
-import { Timer }					from './io-timer';
+import { IoTimer }					from './io-timer';
 
 const AsyncTimeoutMs = 1000*20;	// 20 s chosen to be safely longer than any expected async I/O round-trip to ioBroker
 
 
 /* Formats ts (epoch-ms) as 'DD.MM.YYYY HH:MM:SS'. Defaults to now if ts is omitted. */
-export function dateStr(ts: number = Timer.now()): string {
+export function dateStr(ts: number = IoTimer.now()): string {
 	const  d = new Date(ts);
 	return sprintf('%02d.%02d.%04d %02d:%02d:%02d', d.getDate(), d.getMonth() + 1, d.getFullYear(), d.getHours(), d.getMinutes(), d.getSeconds());
 }
