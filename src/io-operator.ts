@@ -1,5 +1,5 @@
-import { IoAdapter }	from './io-adapter';
-import { AnyState }		from './io-state';
+import { IoAdapter }			from './io-adapter';
+import { type AnyState }		from './io-state';
 
 
 /*
@@ -7,8 +7,8 @@ import { AnyState }		from './io-state';
  * Caller (IoEngine) owns the onTrigger() call lifecycle; subclasses own setup() and execute().
  */
 export abstract class IoOperator {
-	protected	readonly	inputStates:	readonly AnyState[];	// trigger execute() on change; registered in state.triggerOperators
-	protected	readonly	outputStates:	readonly AnyState[];	// written in execute(); registered in state.writtenByOperators
+	protected	readonly	inputStates:	readonly AnyState[];	// trigger execute() on change; registered via state.registerTrigger()
+	protected	readonly	outputStates:	readonly AnyState[];	// written in execute(); registered via state.registerWriter()
 	protected	readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be ready before first onTrigger()
 	protected	readonly	logf	= IoAdapter.logf;
 	private					ready	= false;
@@ -19,14 +19,14 @@ export abstract class IoOperator {
 		this.inputStates	= inputStates;
 		this.outputStates	= outputStates;
 
-		for (const input  of this.inputStates  )	{ input .triggerOperators  .push(this); }
-		for (const output of this.outputStates )	{ output.writtenByOperators.push(this); }
+		for (const input  of this.inputStates  )	{ input .registerTrigger(this); }
+		for (const output of this.outputStates )	{ output.registerWriter (this); }
 	}
 
 	/* Override to perform async setup before the first execute(). Return false to defer setup to the next trigger. */
 	protected setup(): Promise<boolean> | boolean { return true; }
 
-	/* Invoked on each trigger. Precondition: all states are ready (ts > 0). May be async or sync. */
+	/* Invoked on each trigger. Precondition: all states are ready (ts !== -1). May be async or sync. */
 	protected abstract execute(trigger: AnyState): Promise<void> | void;
 
 	/*

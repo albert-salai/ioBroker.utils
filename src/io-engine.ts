@@ -17,16 +17,12 @@ export class IoEngine {
 	/* Seeds all registered IoStates and activates subscriptions. If historyDays > 0, runs SQL history replay first. Resolves after live mode is fully active. */
 	public async start(historyDays: number): Promise<void> {
 		const adapter	= this.adapter;
-		const allStates	= Object.values(IoStates.registry).sort(sortBy('stateId'));
+		const allStates	= IoStates.values().sort(sortBy('stateId'));
 
 		await this.add_folders(allStates);
 
 		// history: replay SQL or seed from current ioBroker state
 		const historyReplayed = (historyDays > 0)  &&  await new IoHistoryEngine().run(historyDays, allStates);
-
-		// ensure IoTimer is configured for live mode
-		IoTimer.configure();
-
 		if (! historyReplayed) {
 			let notInitialized = 0;
 			await Promise.all(allStates.map(async ioState => {
@@ -40,7 +36,7 @@ export class IoEngine {
 					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'future ts', ioState.stateId, dateStr(state.ts), valStr(state.val));
 					notInitialized++;
 				} else {
-					ioState.seed(state.val, state.ts);
+					ioState.init(state.val, state.ts);
 				}
 			}));
 			if (notInitialized > 0) {
@@ -48,15 +44,16 @@ export class IoEngine {
 			}
 		}
 
-		// live: install writeFn and subscribe to all states
-		IoStates.writeFn = async (ioState: AnyState, val: ValType): Promise<void> => {
+		// live: restore real IoTimer and install writeFn, then subscribe to all states
+		IoTimer.configure();
+		IoStates.setWriteFn(async (ioState: AnyState, val: ValType): Promise<void> => {
 			const ts  =   Date.now();
 			const ack = ! ioState.writable;
 			if (ioState.logType === 'write') {
 				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'write()', '', ioState.stateId, dateStr(ts), valStr(val), ack ? '' : ' cmd');
 			}
 			await adapter.writeState(ioState.stateId, { val, ack, ts });
-		};
+		});
 
 		await Promise.all(allStates.map(ioState =>
 			adapter.subscribe({ 'stateId': ioState.stateId, 'ack': true, 'cb': async (state: StateChange) => {

@@ -1,99 +1,108 @@
 import { IoAdapter, ValType, IoStateOpts, dateStr, valStr }		from './io-adapter';
 import { IoOperator }		from './io-operator';
 
-
+// exported for IoOperator definitions to reference the generic state type
 export type AnyState = IoState<ValType>;
 
 // Injected by IoEngine to route writes through the adapter
 type WriteState	= (state: AnyState, val: ValType) => Promise<void>;
 
-/* Registry and factory for IoState instances. Caller must inject writeFn before use. */
-export class IoStates {
-	public static readonly	registry:		Record<string, AnyState> = {};		// keyed by stateId
-	public static			writeFn:		WriteState = (): Promise<void> => Promise.resolve();
-	protected	readonly	logf			= IoAdapter.logf;
-	public		readonly	stateId:		string;
-	public		readonly	name:			string;
-	public		readonly	unit:			string;
-	public		readonly	writable:		boolean;
-	public					ts												= 0;
-	public					logType:		'none' | 'changed' | 'write'	= 'none';
-	public		readonly	triggerOperators:	IoOperator[]	= [];		// operators triggered when 'this' state changes
-	public		readonly	writtenByOperators:	IoOperator[]	= [];		// operators that write 'this' state
+/* Registry and factory for IoState instances. writeFn is injected by IoEngine before engine.start(). */
+class IoStateStore {
+	private readonly	adapter	= IoAdapter.this;
+	private readonly	logf	= IoAdapter.logf;
 
-	/* Precondition: stateId must be unique across all IoStates instances for the registry to remain consistent. */
-	constructor({ stateId, name, unit, write }: {
-		stateId: string,
-		name:	string,
-		unit:	string,
-		write:	boolean,
-	}) {
-		this.stateId	= stateId;
-		this.name		= name;
-		this.unit		= unit;
-		this.writable	= write;
-	}
+	private readonly	registry:	Record<string, AnyState>	= {};		// keyed by stateId
+	private				writeFn:	WriteState					= (): Promise<void> => Promise.resolve();
 
-	/* Creates the ioBroker state object and its IoState wrapper. Throws if already created or state is missing after write. */
-	public static async create<T extends ValType>(stateId: string, valObj: IoStateOpts<T>): Promise<IoState<T>> {
-		if (IoState.registry[stateId])	{
-			throw new Error(`${this.name}: create(): ${stateId} already created`);
+	/* Injected by IoEngine (live) and IoHistoryEngine (history replay) to redirect writes. */
+	public setWriteFn(fn: WriteState): void { this.writeFn = fn; }
+
+	/* Routes the write through the active writeFn. Called by IoState.write(). */
+	public async write(state: AnyState, val: ValType): Promise<void> { return this.writeFn(state, val); }
+
+	/* Self-registration entry point — called by the IoState constructor. */
+	public register(state: AnyState): void { this.registry[state.stateId] = state; }
+
+	/* Returns the registered instance for stateId, or undefined if not yet registered. */
+	public get(stateId: string): AnyState | undefined { return this.registry[stateId]; }
+
+	/* Returns all registered states sorted by stateId. Used by IoEngine during startup. */
+	public values(): AnyState[] { return Object.values(this.registry); }
+
+	/*
+	 * Creates the ioBroker state object and its IoState wrapper.
+	 * Preserves a persisted value; only writes the default when val is null (state was never written).
+	 * Returned instance has ts = -1; caller (IoEngine) must call ioState.init() after reading back the state.
+	 * Throws if stateId is already registered or the state is missing after write.
+	 */
+	public async create<T extends ValType>(stateId: string, valObj: IoStateOpts<T>): Promise<IoState<T>> {
+		if (this.get(stateId))	{
+			throw new Error(`${this.constructor.name}: create(): ${stateId} already created`);
 		}
 
 		const { name, write, unit, def } = valObj.common;
 
-		await IoAdapter.this.writeStateObj(stateId, valObj);
+		await this.adapter.writeStateObj(stateId, valObj);
 
 		// preserve persisted value — only write default when val is null (state was never written)
-		const valState = await IoAdapter.this.readState(stateId);
+		const valState = await this.adapter.readState(stateId);
 		if (valState === null) {
-			throw new Error(`${this.name}: create(): ${stateId} state undefined`);
+			throw new Error(`${this.constructor.name}: create(): ${stateId} state undefined`);
 		}
+
+		const persistedVal = (valState.val !== null) ? (valState.val as T) : def;
 		if (valState.val === null) {
-			await IoAdapter.this.writeState(stateId, { 'val': def, 'ack': true });
+			await this.adapter.writeState(stateId, { 'val': def, 'ack': true });
 		}
 
 		return new IoState<T>({
 			stateId,
 			'name':			name,
-			'write':		write ?? false,
+			'writable':		write ?? false,
 			'unit':			unit  ?? '',
-			'val':			def,
+			'val':			persistedVal,
 		});
 	}
 
-	/* Loads an existing ioBroker state into an IoState wrapper. Returns null (with error log) if missing or type-mismatched. */
-	public static async load<T extends ValType>(stateId: string): Promise<IoState<T> | null> {
-		const adapter = IoAdapter.this;
+	/*
+	 * Loads an existing ioBroker state into an IoState wrapper.
+	 * Returns the existing instance when already registered (avoids duplicates).
+	 * Returns null with an error log when stateId is empty, the state object is missing,
+	 * the value is null (never written), or the runtime type does not match the declared type.
+	 */
+	public async load<T extends ValType>(stateId: string): Promise<IoState<T> | null> {
+		const cn = this.constructor.name;
 
 		if (! stateId) {
-			adapter.logf.warn('%-15s %-15s %-10s %-50s\n%s', this.name, 'load()', 'stateId', 'empty', (new Error()).stack ?? '');
+			this.logf.warn('%-15s %-15s %-10s %-50s\n%s', cn, 'load()', 'stateId', 'empty', (new Error()).stack ?? '');
 			return null;
 		}
 
-		if (IoStates.registry[stateId]) {
-			adapter.logf.debug('%-15s %-15s %-10s %-50s', this.name, 'load()', 'reusing', stateId);
-			return IoStates.registry[stateId] as IoState<T>;
+		const existing = this.get(stateId);
+		if (existing) {
+			this.logf.debug('%-15s %-15s %-10s %-50s', cn, 'load()', 'reusing', stateId);
+			return existing as IoState<T>;
 		}
 
-		const stateObj = await adapter.readStateObject(stateId);
+		const stateObj = await this.adapter.readStateObject(stateId);
 		if (! stateObj) {
-			adapter.logf.error('%-15s %-15s %-10s %-50s', this.name, 'load()', 'missing', 'valObj '+stateId);
+			this.logf.error('%-15s %-15s %-10s %-50s', cn, 'load()', 'missing', 'valObj '+stateId);
 			return null;
 		}
 
-		const state = await adapter.readState(stateId);
+		const state = await this.adapter.readState(stateId);
 		if (! state) {
-			adapter.logf.error('%-15s %-15s %-10s %-50s', this.name, 'load()', 'missing', 'valState '+stateId);
+			this.logf.error('%-15s %-15s %-10s %-50s', cn, 'load()', 'missing', 'valState '+stateId);
 			return null;
 		} else if (state.val === null) {
-			adapter.logf.error('%-15s %-15s %-10s %-50s', this.name, 'load()', 'invalid', 'valState '+stateId);
+			this.logf.error('%-15s %-15s %-10s %-50s', cn, 'load()', 'never written', stateId);
 			return null;
 		}
 
 		const val = state.val as T;	// cast required: compiler can't verify StateValue satisfies T; runtime check below validates
 		if (typeof val !== stateObj.common.type) {
-			adapter.logf.error('%-15s %-15s %-10s %-50s %s', this.name, 'load()', 'type error', stateId, typeof state.val);
+			this.logf.error('%-15s %-15s %-10s %-50s %s', cn, 'load()', 'type error', stateId, typeof state.val);
 			return null;
 		}
 
@@ -101,81 +110,125 @@ export class IoStates {
 		return new IoState<T>({
 			'stateId':		stateId,
 			'name':			(typeof name === 'string') ? name : name.en,
-			'write':		write,
+			'writable':		write,
 			'unit':			unit ?? '',
 			'val':			val,
+			'ts':			state.ts,
 		});
 	}
 }
 
+// singleton: Node module cache ensures one instance across all importers
+export const IoStates = new IoStateStore();
 
 
-/* Typed wrapper around a single ioBroker state. Registered in IoStates.registry on construction. */
-export class IoState<T extends ValType> extends IoStates {
-	public val:		T;
 
-	/* Registers the instance in IoStates.registry under stateId; sets val as the initial value. */
-	constructor({ stateId, name, unit, write, val }: {
+/*
+ * Typed wrapper around a single ioBroker state value.
+ * Self-registers in IoStates.registry on construction so load() can return existing instances.
+ * Caller must not construct directly; use IoStates.create() or IoStates.load().
+ */
+export class IoState<T extends ValType> {
+	private	readonly	logf				= IoAdapter.logf;
+	public	readonly	stateId:			string;
+	public	readonly	name:				string;
+	public	readonly	unit:				string;
+	public	readonly	writable:			boolean;
+	public				logType:			'none' | 'changed' | 'write'	= 'none';
+	private	readonly	triggerOperators:	IoOperator[]	= [];		// operators triggered when 'this' state changes
+	private	readonly	writtenByOperators:	IoOperator[]	= [];		// operators that write 'this' state
+	private				_val:				T;
+	private				_ts					= -1;
+
+	public get val(): T		{ return this._val; }
+	public get ts():  number	{ return this._ts;  }
+
+	/* Wires up trigger/writer relationships. Called by the IoOperator constructor. */
+	public registerTrigger(op: IoOperator): void { this.triggerOperators  .push(op); }
+	public registerWriter (op: IoOperator): void { this.writtenByOperators.push(op); }
+
+	/* Read by IoHistoryEngine to classify states as src vs dst. */
+	public get writerCount(): number { return this.writtenByOperators.length; }
+
+	/*
+	 * Registers the instance in IoStates.registry under stateId; sets val as the initial value.
+	 * ts is optional (defaults to -1). create() always omits ts; engine must call init() after
+	 * reading back the state. load() passes ts from the persisted state record.
+	 */
+	constructor({ stateId, name, unit, writable, val, ts }: {
 		stateId:	string,
 		name:		string,
 		unit:		string,
-		write:		boolean,
+		writable:	boolean,
 		val:		T,
+		ts?:		number,
 	}) {
-		super({ stateId, name, unit, write });
-		IoStates.registry[stateId] = this;
-		this.val = val;
+		this.stateId	= stateId;
+		this.name		= name;
+		this.unit		= unit;
+		this.writable	= writable;
+		this._val		= val;
+		this._ts		= ts ?? -1;
+		IoStates.register(this);		// self-register so IoStates.load() can return existing instances
 	}
 
-	/* Sets val/ts from an initial state read. Logs error if ts is invalid (state was never written). */
-	public seed(val: T, ts: number): void {
-		if (ts <= 0) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'seed()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
+	/* Seeds val/ts from the initial state read. Logs an error and leaves val unchanged when ts is invalid (state was never written). */
+	public init(val: T, ts: number): void {
+		if (ts < 0) {
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
-			this.val	= val;
-			this.ts		= ts;
+			this._val	= val;
+			this._ts	= ts;
 		}
 	}
 
-	/* Called on every state-change event (also replayed from history). Triggers dependent operators only when val changes. Promise resolves after all triggerOperators have finished executing. */
+	/*
+	 * Handles a state-change event (also replayed from history).
+	 * Triggers dependent operators only when val changes; skips operators when val is unchanged.
+	 * Promise resolves after all triggerOperators have finished executing.
+	 * Logs an error and skips all processing when ts is invalid.
+	 */
 	public async onStateChange(val: T, ts: number): Promise<void> {
-		if (ts <= 0) {
+		if (ts < 0) {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'onStateChange()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
-			return;
 
-		}
-
-		this.ts = ts;
-		if (this.val !== val) {
-			this.val = val;
-			for (const operator of this.triggerOperators) {
-				await  operator.onTrigger(this);
+		} else {
+			this._ts = ts;
+			if (this._val !== val) {
+				this._val  = val;
+				for (const operator of this.triggerOperators) {
+					await  operator.onTrigger(this);
+				}
 			}
 		}
 	}
 
-	/* Writes val to the ioBroker state. Logs an error and skips non-finite numbers to avoid persisting NaN/Infinity. */
-	public async write(val: ValType): Promise<void> {
+	/*
+	 * Writes val to the ioBroker state via IoStates.writeFn.
+	 * Logs an error and skips non-finite numbers to avoid persisting NaN or Infinity.
+	 */
+	public async write(val: T): Promise<void> {
 		if ((typeof val === 'number'  &&  ! Number.isFinite(val))) {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', '', this.stateId, dateStr(), valStr(val));
 
 		} else {
-			await IoState.writeFn(this, val);
+			await IoStates.write(this, val);
 		}
 	}
 
 
-	/* Fetches history from the configured history adapter (e.g. ioBroker.sql). Promise resolves after the sendTo round-trip completes. Returns [] if no historyId is configured. */
+	/*
+	 * Fetches history from the configured history adapter (e.g. ioBroker.sql).
+	 * Promise resolves after the sendTo round-trip completes; result array is never mutated after return.
+	 * Returns [] when no historyId is configured.
+	 * see https://github.com/ioBroker/ioBroker.sql/blob/master/main.js#L2302
+	 */
 	public async getHistory(options: { start?: number, end?: number, ack?: boolean, limit?: number }): Promise<{ ts: number, val: T }[]> {
-		// see https://github.com/ioBroker/ioBroker.sql/blob/master/main.js#L2302
 		if (IoAdapter.this.historyId) {
 			const history = await IoAdapter.this.sendToAsync(IoAdapter.this.historyId, 'getHistory', {
-				'id':			this.stateId,
-				'options':		Object.assign({
-									'aggregate':	'none',
-									'ignoreNull':	true,
-								}, options),
+				'id':		this.stateId,
+				'options':	{ 'aggregate': 'none', 'ignoreNull': true, ...options },
 			}) as {result: {ts: number, val: T}[]} | undefined;
 			return history?.result ?? [];
 
@@ -192,8 +245,8 @@ export class IoState<T extends ValType> extends IoStates {
 			'name':					this.name,
 			'unit':					this.unit,
 			'writable':				this.writable,
-			'ts':					dateStr(this.ts),
-			'val':					valStr(this.val),
+			'ts':					dateStr(this._ts),
+			'val':					valStr(this._val),
 			'triggerOperators':		this.triggerOperators  .map((op: IoOperator) => `Operator<${op.constructor.name}>`),
 			'writtenByOperators':	this.writtenByOperators.map((op: IoOperator) => `Operator<${op.constructor.name}>`),
 			'logType':				this.logType,
