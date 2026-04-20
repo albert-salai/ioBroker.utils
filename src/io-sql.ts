@@ -208,9 +208,9 @@ export class IoSql {
 		const historyId	= adapter.historyId;
 
 		const stateObjs = Object.values(await adapter.getForeignObjectsAsync('*', 'state')).filter(stateObj => {
-			const custom  = (stateObj.common.custom ?? {})	as Record<string, Record<string, unknown> | undefined>;
+			const custom: Record<string, { enabled: boolean; changesOnly: boolean }> = stateObj.common.custom ?? {};
 			const history = custom[historyId];
-			return (typeof history === 'object')  &&  history['enabled']  &&  history['changesOnly'];
+			return (typeof history === 'object')  &&  history.enabled  &&  history.changesOnly;
 		});
 		this.logf.info('%-15s %-25s %-45s processing %d stateObjs ...', this.constructor.name, 'cleanUpHistory()', historyId, stateObjs.length);
 
@@ -354,8 +354,6 @@ export class IoSql {
 
 	/* Returns ratio of dirty (not-flushed) to total Aria page-cache blocks. */
 	private async cacheLevel(): Promise<number> {
-		let cache_level = 0;
-
 		// FIXME: mysql2 does not yet support 'bigIntAsNumber' for SHOW STATUS values
 		const qryStr = `SHOW STATUS LIKE 'Aria_pagecache_blocks_%';`;
 		type CacheStatusVar = 'Aria_pagecache_blocks_not_flushed' | 'Aria_pagecache_blocks_unused' | 'Aria_pagecache_blocks_used';
@@ -371,7 +369,7 @@ export class IoSql {
 		}, {} as Record<CacheStatusVar, number>);
 
 		const total = status.Aria_pagecache_blocks_used + status.Aria_pagecache_blocks_unused;
-		cache_level = total > 0 ? status.Aria_pagecache_blocks_not_flushed / total : 0;
+		const cache_level = total > 0 ? status.Aria_pagecache_blocks_not_flushed / total : 0;
 
 		return cache_level;
 	}
