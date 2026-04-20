@@ -39,8 +39,8 @@
 		"typescript-eslint": "^8.59.0"
 	},
 	"scripts": {
-		"build": "sudo -u iobroker tsc -p tsconfig.build.json",
-		"check": "sudo -u iobroker tsc --noEmit",
+		"build": "tsc -p tsconfig.build.json",
+		"check": "tsc --noEmit",
 		"lint": "eslint",
 		"test": "echo \"Error: no test specified\" && exit 1"
 	}
