@@ -9,8 +9,9 @@ type WriteState	= (state: AnyState, val: ValType) => Promise<void>;
 
 /* Registry and factory for IoState instances. writeFn is injected by IoEngine before engine.start(). */
 class IoStateStore {
-	private readonly	adapter	= IoAdapter.this;
-	private readonly	logf	= IoAdapter.logf;
+	// getters instead of fields: IoAdapter.this/.logf are set after module load, so capturing at class init would be undefined
+	private get adapter()	{ return IoAdapter.this; }
+	private get logf()		{ return IoAdapter.logf; }
 
 	private readonly	registry:	Record<string, AnyState>	= {};		// keyed by stateId
 	private				writeFn:	WriteState					= (): Promise<void> => Promise.resolve();
@@ -33,36 +34,26 @@ class IoStateStore {
 	/*
 	 * Creates the ioBroker state object and its IoState wrapper.
 	 * Preserves a persisted value; only writes the default when val is null (state was never written).
-	 * Returned instance has ts = -1; caller (IoEngine) must call ioState.init() after reading back the state.
-	 * Throws if stateId is already registered or the state is missing after write.
+	 * Throws if stateId is already registered or load() fails after write.
 	 */
 	public async create<T extends ValType>(stateId: string, valObj: IoStateOpts<T>): Promise<IoState<T>> {
 		if (this.get(stateId))	{
 			throw new Error(`${this.constructor.name}: create(): ${stateId} already created`);
 		}
 
-		const { name, write, unit, def } = valObj.common;
-
-		await this.adapter.writeStateObj(stateId, valObj);
-
 		// preserve persisted value — only write default when val is null (state was never written)
+		await this.adapter.writeStateObj(stateId, valObj);
 		const valState = await this.adapter.readState(stateId);
-		if (valState === null) {
-			throw new Error(`${this.constructor.name}: create(): ${stateId} state undefined`);
+		if (valState?.val === null) {
+			await this.adapter.writeState(stateId, { 'val': valObj.common.def, 'ack': true });
 		}
 
-		const persistedVal = (valState.val !== null) ? (valState.val as T) : def;
-		if (valState.val === null) {
-			await this.adapter.writeState(stateId, { 'val': def, 'ack': true });
+		const ioState = await this.load<T>(stateId);
+		if (! ioState) {
+			throw new Error(`${this.constructor.name}: create(): ${stateId} load() failed`);
 		}
 
-		return new IoState<T>({
-			stateId,
-			'name':			name,
-			'writable':		write ?? false,
-			'unit':			unit  ?? '',
-			'val':			persistedVal,
-		});
+		return ioState;
 	}
 
 	/*
@@ -81,38 +72,37 @@ class IoStateStore {
 
 		const existing = this.get(stateId);
 		if (existing) {
-			this.logf.debug('%-15s %-15s %-10s %-50s', cn, 'load()', 'reusing', stateId);
+			this.logf.debug('%-15s %-15s %-50s', cn, 'load()', stateId);
 			return existing as IoState<T>;
 		}
 
 		const stateObj = await this.adapter.readStateObject(stateId);
 		if (! stateObj) {
-			this.logf.error('%-15s %-15s %-10s %-50s', cn, 'load()', 'missing', 'valObj '+stateId);
+			this.logf.error('%-15s %-15s %-50s', cn, 'load(): missing stateObj', stateId);
 			return null;
 		}
 
 		const state = await this.adapter.readState(stateId);
 		if (! state) {
-			this.logf.error('%-15s %-15s %-10s %-50s', cn, 'load()', 'missing', 'valState '+stateId);
+			this.logf.error('%-15s %-15s %-50s', cn, 'load(): missing state', stateId);
 			return null;
+
 		} else if (state.val === null) {
-			this.logf.error('%-15s %-15s %-10s %-50s', cn, 'load()', 'never written', stateId);
+			this.logf.error('%-15s %-15s %-50s', cn, 'load(): never written', stateId);
 			return null;
 		}
 
-		const val = state.val as T;	// cast required: compiler can't verify StateValue satisfies T; runtime check below validates
-		if (typeof val !== stateObj.common.type) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s', cn, 'load()', 'type error', stateId, typeof state.val);
+		if (typeof state.val !== stateObj.common.type) {
+			this.logf.error('%-15s %-15s %-50s %s', cn, 'load(): type error', stateId, typeof state.val);
 			return null;
 		}
 
-		const { name, write, unit } = stateObj.common;
 		return new IoState<T>({
 			'stateId':		stateId,
-			'name':			(typeof name === 'string') ? name : name.en,
-			'writable':		write,
-			'unit':			unit ?? '',
-			'val':			val,
+			'name':			(typeof stateObj.common.name === 'string') ? stateObj.common.name : stateObj.common.name.en,
+			'writable':		stateObj.common.write,
+			'unit':			stateObj.common.unit ?? '',
+			'val':			state.val as T,
 			'ts':			state.ts,
 		});
 	}
@@ -140,7 +130,7 @@ export class IoState<T extends ValType> {
 	private				_val:				T;
 	private				_ts					= -1;
 
-	public get val(): T		{ return this._val; }
+	public get val(): T			{ return this._val; }
 	public get ts():  number	{ return this._ts;  }
 
 	/* Wires up trigger/writer relationships. Called by the IoOperator constructor. */
@@ -150,32 +140,28 @@ export class IoState<T extends ValType> {
 	/* Read by IoHistoryEngine to classify states as src vs dst. */
 	public get writerCount(): number { return this.writtenByOperators.length; }
 
-	/*
-	 * Registers the instance in IoStates.registry under stateId; sets val as the initial value.
-	 * ts is optional (defaults to -1). create() always omits ts; engine must call init() after
-	 * reading back the state. load() passes ts from the persisted state record.
-	 */
+	/* Registers the instance in IoStates.registry under stateId; sets val/ts as the initial value. */
 	constructor({ stateId, name, unit, writable, val, ts }: {
 		stateId:	string,
 		name:		string,
 		unit:		string,
 		writable:	boolean,
 		val:		T,
-		ts?:		number,
+		ts:			number,
 	}) {
 		this.stateId	= stateId;
 		this.name		= name;
 		this.unit		= unit;
 		this.writable	= writable;
 		this._val		= val;
-		this._ts		= ts ?? -1;
+		this._ts		= ts;
 		IoStates.register(this);		// self-register so IoStates.load() can return existing instances
 	}
 
 	/* Seeds val/ts from the initial state read. Logs an error and leaves val unchanged when ts is invalid (state was never written). */
-	public init(val: T, ts: number): void {
+	public set(val: T, ts: number): void {
 		if (ts < 0) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'init()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'set()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
 			this._val	= val;

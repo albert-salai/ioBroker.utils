@@ -9,10 +9,10 @@ class IoStates {
 
   // Factory methods — public entry points for consumers
   static create<T>(stateId, opts: IoStateOpts<T>): Promise<IoState<T>>
-    // creates object + state in ioBroker; throws if stateId already created
+    // creates object + state in ioBroker; calls load() internally; throws if stateId already created or load() fails
   static load<T>(stateId): Promise<IoState<T> | null>
-    // returns existing instance if already loaded; otherwise loads object+state from ioBroker
-    // returns null on missing stateId, missing object/state, or type mismatch
+    // returns existing instance if already registered; otherwise loads object+state from ioBroker
+    // returns null on missing stateId, missing/unwritten state, or type mismatch
 }
 
 class IoState<T extends ValType> extends IoStates {
@@ -21,13 +21,13 @@ class IoState<T extends ValType> extends IoStates {
   readonly unit:      string
   readonly writable:  boolean     			// true = external writable input
   val:  T
-  ts:   number                    			// ms timestamp; 0 = not yet initialized
+  ts:   number                    			// ms timestamp; -1 = not yet initialized
   logType: 'none' | 'changed' | 'write'
 
   readonly triggerOperators:    IoOperator[]   // operators triggered when this state changes
   readonly writtenByOperators:  IoOperator[]   // operators that write this state
 
-  seed(val: T, ts: number): void                  // set val+ts (ts must be > 0); no operator trigger
+  set(val: T, ts: number): void                   // set val+ts (ts must be >= 0); logs error and leaves val unchanged if ts < 0
   onStateChange(val: T, ts: number): Promise<void> // always updates ts; triggers triggerOperators only if val changed
   write(val: ValType): Promise<void>               // write to ioBroker via IoStates.writeFn; skips non-finite numbers
   getHistory(opts: { start?, end?, ack?, limit? }): Promise<{ts,val}[]>  // via historyId sendTo
@@ -74,7 +74,7 @@ class IoEngine {
   async start(historyDays: number): Promise<void>
     // historyDays > 0: runs IoHistoryEngine.run(), then activates live mode
     // historyDays = 0: seeds states from current ioBroker values, then activates live mode
-    // throws if any state has no value (val == null, future ts, or missing)
+    // throws if any state has val == null, a future ts (clock skew), or is missing
 }
 ```
 
@@ -97,4 +97,4 @@ class IoHistoryEngine {
 ```
 
 ---
-*Last updated: 2026-04-15*
+*Last updated: 2026-04-20*

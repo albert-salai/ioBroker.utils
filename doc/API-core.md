@@ -31,7 +31,6 @@ class IoAdapter extends Adapter {
   // Subscriptions — callbacks serialized via mutex
   subscribe(spec: { stateId, cb, val?, ack? }): Promise<void>
   unsubscribe(spec): Promise<void>
-  subscribeOnce(spec): Promise<void>         // auto-unsubscribes after first match
 
   // Async timer helpers — callbacks run inside mutex
   setTimeoutAsync(cb: () => Promise<void>, ms): ioBroker.Timeout
@@ -144,4 +143,4 @@ interface SqlHistoryRow { id: string, ts: number, val: number | string | boolean
 ```
 
 ---
-*Last updated: 2026-03-15*
+*Last updated: 2026-04-20*

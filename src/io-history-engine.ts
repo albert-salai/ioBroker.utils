@@ -167,7 +167,7 @@ export class IoHistoryEngine {
 				ts = fromTs;
 			}
 
-			ioState.init(val, ts);
+			ioState.set(val, ts);
 		}
 	}
 
