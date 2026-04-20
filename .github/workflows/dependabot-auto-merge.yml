@@ -1,5 +1,4 @@
-# Automatically merge Dependabot PRs when version comparison is within the range
-# that is configured in .github/auto-merge.yml
+# Automatically merge Dependabot PRs based on update type
 
 name: Auto-Merge Dependabot PRs
 
@@ -17,11 +16,19 @@ jobs:
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Check if PR should be auto-merged
-        uses: ahmadnassri/action-dependabot-auto-merge@v2
+      - name: Get Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          command: squash and merge
+
+      - name: Merge patch and minor dev updates
+        if: |
+          steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' && steps.meta.outputs.dependency-type == 'direct:development') ||
+          steps.meta.outputs.update-type == 'version-update:semver-security'
+        run: gh pr merge "$PR_URL" --squash --repo "$GITHUB_REPOSITORY"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
