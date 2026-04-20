@@ -277,7 +277,7 @@ export class IoAdapter extends Adapter {
 			this.logf.debug('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'writeStateObj()', 'newObj', stateId, JSON.stringify(newStateObj, null, 4));
 			await this.setForeignObject(stateId, newStateObj);
 			const stateObj = await this.getForeignObjectAsync(stateId);
-			if (! stateObj  ||  stateObj.type !== 'state') {
+			if (stateObj?.type !== 'state') {
 				throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: missing`);
 			}
 			return stateObj;
