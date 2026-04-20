@@ -1,8 +1,8 @@
 import { IoAdapter, StateChange, ValType, dateStr, valStr }		from './io-adapter';
-import { IoStates, AnyState }		from './io-state';
-import { IoTimer }					from './io-timer';
-import { sortBy }					from './io-util';
-import { IoHistoryEngine }			from './io-history-engine';
+import { IoStates, type AnyState }		from './io-state';
+import { IoTimer }						from './io-timer';
+import { sortBy }						from './io-util';
+import { IoHistoryEngine }				from './io-history-engine';
 
 
 /* Orchestrates history replay and live-mode state seeding, SQL integration, and timer lifecycle. */
@@ -36,7 +36,7 @@ export class IoEngine {
 					this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'start()', 'future ts', ioState.stateId, dateStr(state.ts), valStr(state.val));
 					notInitialized++;
 				} else {
-					ioState.init(state.val, state.ts);
+					ioState.set(state.val, state.ts);
 				}
 			}));
 			if (notInitialized > 0) {
@@ -58,9 +58,9 @@ export class IoEngine {
 		await Promise.all(allStates.map(ioState =>
 			adapter.subscribe({ 'stateId': ioState.stateId, 'ack': true, 'cb': async (state: StateChange) => {
 				if (ioState.logType === 'changed'  &&  state.val !== ioState.val) {
-					this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'onChange()', ((state.val === ioState.val) ? 'unchanged' : ''), ioState.stateId, dateStr(state.ts), valStr(state.val), state.ack ? '' : ' cmd');
+					this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'onStateChange()', ((state.val === ioState.val) ? 'unchanged' : ''), ioState.stateId, dateStr(state.ts), valStr(state.val), state.ack ? '' : ' cmd');
 				}
-				await ioState.onStateChange(state.val, state.ts);
+				await ioState.onStateChange(state.val, state.ts);		// fires on every ack'd state event — val may be unchanged
 			}})
 		));
 

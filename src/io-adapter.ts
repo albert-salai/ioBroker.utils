@@ -136,24 +136,24 @@ export class IoAdapter extends Adapter {
 			}
 		});
 
-		// All onChange dispatches are serialized through the mutex to prevent concurrent state mutations
+		// All onStateChange dispatches are serialized through the mutex to prevent concurrent state mutations
 		this.on('stateChange', (stateId: string, stateChange: ioBroker.State | null | undefined) => {
 			if (stateChange) {
 				const { val, ack, ts } = stateChange;
 				if (val === null) {
-					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'val null', stateId);
+					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onStateChange()', 'val null', stateId);
 
 				} else {
 					this.mutex.runExclusive(async () => {
-						await this.onChange(stateId, { val, ack, ts });
+						await this.onStateChange(stateId, { val, ack, ts });
 					}).catch((err: unknown) => {
 						const msg = (err instanceof Error) ? (err.stack ?? err.message) : String(err);
-						this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'onChange()', 'error', stateId, msg);
+						this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'onStateChange()', 'error', stateId, msg);
 					});
 				}
 
 			} else {
-				this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onChange()', 'deleted',  stateId);
+				this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onStateChange()', 'deleted',  stateId);
 			}
 		});
 
@@ -361,26 +361,12 @@ export class IoAdapter extends Adapter {
 	}
 
 
-	/**
-	 * Fires `spec.cb` exactly once for the next matching state change.
-	 * The unsubscribe completes before `spec.cb` is awaited, so the callback
-	 * may safely re-subscribe without creating a duplicate subscription.
-	 */
-	public async subscribeOnce(spec: StateChangeOpts): Promise<void> {
-		const wrappedSpec: StateChangeOpts = { ...spec };
-		wrappedSpec.cb = async (stateChange: StateChange) => {
-			await this.unsubscribe(wrappedSpec);
-			await spec.cb(stateChange);
-		};
-		await this.subscribe(wrappedSpec);
-	}
-
 
 	/* Dispatches a state-change event to all registered specs for stateId, filtering by val/ack if specified. */
-	private async onChange(stateId: string, { val, ack, ts }: { val: ValType, ack: boolean, ts: number }): Promise<void> {
+	private async onStateChange(stateId: string, { val, ack, ts }: { val: ValType, ack: boolean, ts: number }): Promise<void> {
 		const specs = this.stateChangeSpecs[stateId];
 		if (! specs) {
-			this.logf.error('%-15s %-15s %-10s %-50s %s   %-3s %s', this.constructor.name, 'onChange()', 'no spec', stateId, dateStr(ts), (ack ? '' : 'cmd'), valStr(val));
+			this.logf.error('%-15s %-15s %-10s %-50s %s   %-3s %s', this.constructor.name, 'onStateChange()', 'no spec', stateId, dateStr(ts), (ack ? '' : 'cmd'), valStr(val));
 
 		} else {
 			for (const spec of specs) {
