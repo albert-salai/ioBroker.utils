@@ -59,13 +59,13 @@ export class IoHistoryEngine {
 			'clearTimer':	this.hist_clearTimer.bind(this),
 			'now':			this.hist_getNow   	.bind(this),
 		});
-		IoStates.writeFn = this.hist_write.bind(this);
+		IoStates.setWriteFn(this.hist_write.bind(this));
 
 		// srcStates: have real SQL history to replay; dstStates: read-only computed outputs
 		const srcStates: Record<string, AnyState>	= {};		// by stateId
 		const dstStates: Record<string, AnyState>	= {};		// by stateId
 		for (const ioState of allStates) {
-			const isDst = (ioState.writtenByOperators.length > 0)  &&  (! ioState.writable);
+			const isDst = (ioState.writerCount > 0)  &&  (! ioState.writable);
 			if (isDst)	dstStates[ioState.stateId] = ioState;
 			else		srcStates[ioState.stateId] = ioState;
 		}
@@ -167,7 +167,7 @@ export class IoHistoryEngine {
 				ts = fromTs;
 			}
 
-			ioState.seed(val, ts);
+			ioState.init(val, ts);
 		}
 	}
 
