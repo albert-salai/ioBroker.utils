@@ -11,6 +11,9 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   auto-merge:
     if: github.actor == 'dependabot[bot]'
@@ -26,7 +29,7 @@ jobs:
         if: |
           steps.meta.outputs.update-type == 'version-update:semver-patch' ||
           (steps.meta.outputs.update-type == 'version-update:semver-minor' && steps.meta.outputs.dependency-type == 'direct:development') ||
-          steps.meta.outputs.package-ecosystem == 'github_actions' ||
+          (steps.meta.outputs.update-type == 'version-update:semver-minor' && steps.meta.outputs.package-ecosystem == 'github_actions') ||
           steps.meta.outputs.update-type == 'version-update:semver-security'
         run: gh pr merge "$PR_URL" --squash --repo "$GITHUB_REPOSITORY"
         env:
