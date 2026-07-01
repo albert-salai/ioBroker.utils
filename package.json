@@ -37,7 +37,7 @@
 		"eslint": "^10.4.1",
 		"globals": "^17.6.0",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.60.0"
+		"typescript-eslint": "^8.62.1"
 	},
 	"scripts": {
 		"build": "tsc -p tsconfig.build.json",
