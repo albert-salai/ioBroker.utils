@@ -48,6 +48,6 @@
 		"test:integration": "echo \"No integration tests\" && exit 0"
 	},
 	"overrides": {
-		"sharp": "^0.34.5"
+		"sharp": "^0.35.4"
 	}
 }
