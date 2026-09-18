@@ -22,8 +22,8 @@
 		"ansi-colors": "^4.1.3",
 		"async-mutex": "^0.5.0",
 		"deep-diff": "^1.0.2",
+		"ml-matrix": "^6.15.0",
 		"mysql2": "^3.22.5",
-		"numjs": "^0.16.1",
 		"sprintf-js": "^1.1.3"
 	},
 	"devDependencies": {
@@ -32,7 +32,6 @@
 		"@tsconfig/strictest": "^2.0.8",
 		"@types/deep-diff": "^1.0.5",
 		"@types/node": "~22",
-		"@types/numjs": "^0.16.8",
 		"@types/sprintf-js": "^1.1.4",
 		"eslint": "^10.9.1",
 		"globals": "^17.11.0",
@@ -46,8 +45,5 @@
 		"test": "echo \"Error: no test specified\" && exit 1",
 		"test:package": "echo \"No package tests\" && exit 0",
 		"test:integration": "echo \"No integration tests\" && exit 0"
-	},
-	"overrides": {
-		"sharp": "^0.35.4"
 	}
 }
