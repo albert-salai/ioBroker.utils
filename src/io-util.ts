@@ -1,5 +1,5 @@
 import { IoAdapter }		from './io-adapter';
-import   nj					from 'numjs';
+import { Matrix }			from 'ml-matrix';
 
 
 /* Returns a comparator that sorts objects of type T by the given key in ascending order. */
@@ -171,49 +171,49 @@ export function newtonRaphson(f: (x: number) => number, x0: number, options: {
 export class RLS {
 	private dimensions				= 1;
 	private lambda					= 0.95;
-	private eye:		nj.NdArray	= nj.identity(this.dimensions);		// identity matrix; resized in init()
-	private w_hat:		nj.NdArray	= nj.zeros(this.dimensions);		// parameter estimate column vector
-	private P:			nj.NdArray	= this.eye.multiply(1);				// error covariance matrix
+	private eye:		Matrix		= Matrix.eye(this.dimensions);			// identity matrix; resized in init()
+	private w_hat:		Matrix		= Matrix.zeros(this.dimensions, 1);	// parameter estimate column vector
+	private P:			Matrix		= this.eye.clone();						// error covariance matrix
 
 	/* Initializes filter dimensions, forgetting factor, and covariance. Must be called before update(). */
 	public init(w: number[], lambda: number, P: number|number[][]): void {
 		this.dimensions	= w.length;
 		this.lambda		= lambda;
-		this.eye		= nj.identity(this.dimensions);
-		this.w_hat		= nj.array(w).reshape(this.dimensions, 1);			// parameter estimate column vector
+		this.eye		= Matrix.eye(this.dimensions);
+		this.w_hat		= Matrix.columnVector(w);								// parameter estimate column vector
 		IoAdapter.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'init()', 'eye',	JSON.stringify(this.eye		));
 		IoAdapter.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'init()', 'w_hat',	JSON.stringify(this.w_hat	));
 
 		if (typeof P === 'number') {
-			this.P = this.eye.multiply(P);
+			this.P = this.eye.clone().mul(P);
 		} else if (P[0]) {
-			this.P = nj.array(P.flat()).reshape(P.length, P[0].length);
+			this.P = new Matrix(P);
 		}
 		IoAdapter.logf.debug('%-15s %-15s %-10s %s', this.constructor.name, 'init()', 'P',		JSON.stringify(this.P		));
 	}
 
 	/* Updates the parameter estimate with a new (input, output) sample. Returns the current w_hat as a flat array. */
 	public update(x_vals: number[], y_val: number): number[] {
-		const x		= nj.array(x_vals).reshape(this.dimensions, 1);		// input column vector
-		const xT	= x.T;												// input row    vector
+		const x		= Matrix.columnVector(x_vals);							// input column vector
+		const xT	= x.transpose();										// input row    vector
 
-		const y_hat:	number		= xT.dot(this.w_hat).get(0, 0);
+		const y_hat:	number		= xT.mmul(this.w_hat).get(0, 0);
 		const y_err:	number		= y_val - y_hat;
 
 		// Kalman gain: g := P x / (lambda + xT P x)
-		const xT_P:		nj.NdArray	= xT.dot(this.P);										// row    vector
-		const x_xT_P:	nj.NdArray	= x.dot(xT_P);											// matrix
-		const xT_P_x:	number		= xT_P.dot(x).get(0, 0);								// number
-		const P_x:		nj.NdArray	= this.P.dot(x);										// column vector
-		const gain:		nj.NdArray	= P_x.multiply(1/(this.lambda + xT_P_x));				// column vector
+		const xT_P:		Matrix	= xT.mmul(this.P);										// row    vector
+		const x_xT_P:	Matrix	= x.mmul(xT_P);											// matrix
+		const xT_P_x:	number	= xT_P.mmul(x).get(0, 0);								// number
+		const P_x:		Matrix	= this.P.mmul(x);										// column vector
+		const gain:		Matrix	= P_x.clone().mul(1/(this.lambda + xT_P_x));			// column vector
 
 		// P <-- 1/lambda (P - (P x xT P)/(lambda + xT P x))
 		//     = P (I - (x xT P)/(lambda + xT P x)) 1/lambda
-		this.P = this.P.dot(this.eye.subtract(x_xT_P)).multiply(1/(this.lambda + xT_P_x));
+		this.P = this.P.mmul(this.eye.clone().sub(x_xT_P)).mul(1/(this.lambda + xT_P_x));
 
-		this.w_hat.add(gain.multiply(y_err), false);	// false = mutate in-place (numjs add flag)
+		this.w_hat.add(gain.mul(y_err));	// mutates w_hat in-place
 
-		return this.w_hat.reshape(this.dimensions).tolist();
+		return this.w_hat.to1DArray();
 	}
 }
 
