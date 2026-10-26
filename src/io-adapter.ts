@@ -337,7 +337,7 @@ export class IoAdapter extends Adapter {
 		const stateId	= spec.stateId;
 		const specs		= this.stateChangeSpecs[stateId] = this.stateChangeSpecs[stateId]  ??  [];
 		const len		= specs.push(spec);
-		this.logf.debug('%-15s %-15s %-10s %-50s %-4s %s', this.constructor.name, 'subscribe()', `#${String(len - 1)}`, stateId, String('val' in spec ? spec.val : 'any'), ('ack' in spec ? (spec.ack ? 'ack' : 'cmd') : '*'));
+		this.logf.silly('%-15s %-15s %-10s %-50s %-4s %s', this.constructor.name, 'subscribe()', `#${String(len - 1)}`, stateId, String('val' in spec ? spec.val : 'any'), ('ack' in spec ? (spec.ack ? 'ack' : 'cmd') : '*'));
 		if (len === 1) {
 			const stateObj = await this.readStateObject(stateId);
 			if (stateObj) {
@@ -354,7 +354,7 @@ export class IoAdapter extends Adapter {
 		const stateId  = spec.stateId;
 		const specs		= (this.stateChangeSpecs[stateId]  ??  []).filter((s) => (s !== spec));
 		this.stateChangeSpecs[stateId] = specs;
-		this.logf.debug('%-15s %-15s %-10s %-50s %-4s %s', this.constructor.name, 'unsubscribe()', `#${String(specs.length)}`, stateId, String('val' in spec ? spec.val : 'any'), ('ack' in spec ? (spec.ack ? 'ack' : 'cmd') : '*'));
+		this.logf.silly('%-15s %-15s %-10s %-50s %-4s %s', this.constructor.name, 'unsubscribe()', `#${String(specs.length)}`, stateId, String('val' in spec ? spec.val : 'any'), ('ack' in spec ? (spec.ack ? 'ack' : 'cmd') : '*'));
 		if (specs.length === 0) {
 			await this.unsubscribeForeignStatesAsync(stateId);
 		}
