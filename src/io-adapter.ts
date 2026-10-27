@@ -157,6 +157,19 @@ export class IoAdapter extends Adapter {
 			}
 		});
 
+		// sendTo() messages share the mutex with state changes; the return value of onMessage() is the reply
+		this.on('message', (obj: ioBroker.Message) => {
+			this.mutex.runExclusive(async () => {
+				const reply = await this.onMessage(obj.command, obj.message);
+				if (obj.callback) {
+					this.sendTo(obj.from, obj.command, reply, obj.callback);
+				}
+			}).catch((err: unknown) => {
+				const msg = (err instanceof Error) ? (err.stack ?? err.message) : String(err);
+				this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'onMessage()', 'error', obj.command, msg);
+			});
+		});
+
 		this.on('unload', async (callback: () => void) => {
 			try					{ await this.onUnload();														}
 			catch (e: unknown)	{ this.log.error((e instanceof Error) ? (e.stack ?? '') : JSON.stringify(e));	}
@@ -175,6 +188,14 @@ export class IoAdapter extends Adapter {
 
 	/* Override to perform adapter startup after ioBroker connection is established. */
 	protected async onReady(): Promise<void> { /* noop */ }
+
+	/*
+	 * Override to handle sendTo() commands (needs `common.messagebox: true` in the instance object).
+	 * The result is sent back to the caller if it passed a callback.
+	 */
+	protected async onMessage(command: string, _message: unknown): Promise<unknown> {
+		return { 'error': `unknown command '${command}'` };
+	}
 
 	/* Override to perform cleanup before the adapter process exits. */
 	protected async onUnload(): Promise<void> { /* noop */ }
