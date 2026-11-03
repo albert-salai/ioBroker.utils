@@ -193,8 +193,8 @@ export class IoAdapter extends Adapter {
 	 * Override to handle sendTo() commands (needs `common.messagebox: true` in the instance object).
 	 * The result is sent back to the caller if it passed a callback.
 	 */
-	protected async onMessage(command: string, _message: unknown): Promise<unknown> {
-		return { 'error': `unknown command '${command}'` };
+	protected onMessage(command: string, _message: unknown): Promise<unknown> {
+		return Promise.resolve({ 'error': `unknown command '${command}'` });
 	}
 
 	/* Override to perform cleanup before the adapter process exits. */
@@ -258,6 +258,7 @@ export class IoAdapter extends Adapter {
 		};
 		Object.assign(newCommon, opts.common);
 
+		let removeHistory = false;
 		if (this.historyId) {
 			if (opts.history?.enabled) {
 				newCommon.custom = newCommon.custom ?? {};
@@ -283,8 +284,7 @@ export class IoAdapter extends Adapter {
 					opts.history,									// caller opts take final precedence
 				);
 			} else if (oldCustom[this.historyId] !== undefined) {
-				newCommon.custom = newCommon.custom ?? {};
-				newCommon.custom[this.historyId] = null;			// null removes history from ioBroker object
+				removeHistory = true;								// extend stores a null as null: the key is deleted after the write
 			}
 		}
 
@@ -316,6 +316,9 @@ export class IoAdapter extends Adapter {
 
 			if (diffs.length > 0) {
 				await this.extendForeignObjectAsync(stateId, newStateObj);
+				if (removeHistory) {
+					await this.removeHistoryCustom(stateId);
+				}
 				const stateObj = await this.getForeignObjectAsync(stateId);
 				if (stateObj?.type !== 'state') {
 					throw new Error(`${this.constructor.name}: writeStateObj(): ${stateId}: invalid object type '${stateObj?.type ?? 'undefined'}'`);
@@ -325,6 +328,22 @@ export class IoAdapter extends Adapter {
 			} else {
 				return oldStateObj;
 			}
+		}
+	}
+
+
+	/* Deletes the history instance's `custom` key of a state (an empty `custom` too), so the admin UI shows no history. */
+	private async removeHistoryCustom(stateId: string): Promise<void> {
+		const obj = await this.getForeignObjectAsync(stateId);
+		const custom = obj?.common.custom as Record<string, unknown> | undefined;
+		if (obj && custom && this.historyId && this.historyId in custom) {
+			const rest = Object.fromEntries(Object.entries(custom).filter(([id]) => id !== this.historyId));
+			if (Object.keys(rest).length > 0) {
+				obj.common.custom = rest as typeof obj.common.custom;
+			} else {
+				delete obj.common.custom;
+			}
+			await this.setForeignObject(stateId, obj);
 		}
 	}
 
