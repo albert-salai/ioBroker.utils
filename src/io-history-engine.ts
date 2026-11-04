@@ -154,7 +154,10 @@ export class IoHistoryEngine {
 						val = state.val;
 						ts  = state.ts;
 						this.logf.debug('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'hist_init()', 'state',  ioState.stateId, dateStr(ts), valStr(val));
-						await this.adapter.writeState(ioState.stateId, { val, ts, 'ack': true });
+						// write back only srcStates: a computed dstState is recomputed by the replay, and the write-back would
+						// add an SQL row with the old ts outside the operator's output (same test as in run())
+						const isDst = (ioState.writerCount > 0)  &&  (! ioState.writable);
+						if (! isDst)	await this.adapter.writeState(ioState.stateId, { val, ts, 'ack': true });
 
 					} else {
 						throw new Error(`${this.constructor.name}: hist_init(): ${ioState.stateId}: not found`);
