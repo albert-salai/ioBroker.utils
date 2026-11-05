@@ -71,15 +71,33 @@ export class OpMean extends IoOperator {
 		}
 
 		if (this.clockMs !== null) {
-			const tzOffsetMs = (new Date()).getTimezoneOffset()*60*1000;					// e.g. -60*60*1000 for UTC+1
-			const intervalMs = this.clockMs;
-			const timeoutMs  = intervalMs - ((IoTimer.now() - tzOffsetMs) % intervalMs);		// align first tick to the next wall-clock boundary
-			IoTimer.setTimer({ name: this.constructor.name, timeoutMs, intervalMs, cb: async () => {
-				await this.step();
-			}});
+			this.scheduleTick(this.clockMs);
 		}
 
 		return true;
+	}
+
+
+	/*
+	 * Arms a one-shot timer for the next clock tick, which re-arms itself after step().
+	 * Each tick is computed from local time at that moment (IoTimer.now(), the simulated clock in replay), so that a
+	 * DST change shifts the following ticks (a 24 h clock stays on local midnight) and replay aligns past days with
+	 * their own UTC offset. Rejected alternative: a fixed setInterval, which keeps the offset of the first tick.
+	 */
+	private scheduleTick(intervalMs: number): void {
+		const now		= IoTimer.now();
+		const offsetAt	= (ts: number) => new Date(ts).getTimezoneOffset()*60*1000;		// [ms], negative east of UTC
+
+		// next local boundary strictly after now; its UTC time uses the offset valid at the boundary (two passes converge)
+		const localNext	= (Math.floor((now - offsetAt(now)) / intervalMs) + 1) * intervalMs;
+		let   nextTs	= localNext + offsetAt(now);
+		nextTs			= localNext + offsetAt(nextTs);
+		if (nextTs <= now) { nextTs = now + intervalMs; }				// DST fold: never schedule in the past
+
+		IoTimer.setTimer({ name: this.constructor.name, timeoutMs: nextTs - now, cb: async () => {
+			await this.step();
+			this.scheduleTick(intervalMs);
+		}});
 	}
 
 
@@ -101,7 +119,8 @@ export class OpMean extends IoOperator {
 	 * Called on every input change (event mode) or on a wall-clock interval (clock mode).
 	 */
 	private async step(): Promise<void> {
-		if (this.periodMs === 0 || this.hist.length < 2) { return; }
+		const clock = (this.clockMs !== null);
+		if (this.periodMs === 0 || this.hist.length === 0 || (!clock && this.hist.length < 2)) { return; }		// clock mode: a single sample is a valid held value
 
 		let integral = 0;
 		let keepFrom = 0;		// index of the first entry to keep after pruning; splice(0, keepFrom) discards everything before it
@@ -154,7 +173,7 @@ export class OpMean extends IoOperator {
 
 		const meanVal = integral / this.periodMs;											// time-weighted mean = integral / window length
 		const output  = (this.precision !== null) ? Math.round(meanVal / this.precision) * this.precision : meanVal;	// snap to precision if set
-		if (output !== this.Output.val) {
+		if (clock || output !== this.Output.val) {		// clock mode writes every tick so the history has no gaps
 			await this.Output.write(output);
 		}
 	}
