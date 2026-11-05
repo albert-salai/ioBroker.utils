@@ -128,10 +128,11 @@ export class OpMean extends IoOperator {
 		if (this.backward) {
 			// Each sample val[i] is considered valid for the interval  prev_ts → curr.ts
 			// (i.e. the value "arrived" at curr.ts and was valid since the previous sample).
-			// Integration window: [ last.ts - periodMs, last.ts ]
-			// The window closes at the most recent sample so that data beyond last.ts is not extrapolated.
-			// hist.length >= 2 is guaranteed above, so hist[last] is always defined; ?? 0 is unreachable.
-			const end   = this.hist[this.hist.length - 1]?.ts ?? 0;
+			// Integration window: [ end - periodMs, end ]. Event mode: end is the most recent sample, nothing is extrapolated.
+			// Clock mode: end is the tick, and the newest value is held from its own ts to the tick (no later sample
+			// exists yet; without it a tick hours after the last sample would average a shifted window).
+			const lastTs = this.hist[this.hist.length - 1]?.ts ?? 0;	// hist is not empty, see above
+			const end   = clock ? Math.max(lastTs, IoTimer.now()) : lastTs;
 			const begin = end - this.periodMs;
 			const clamp = (ts: number) => Math.max(begin, Math.min(end, ts));	// keeps timestamps within [ begin, end ]
 
@@ -141,7 +142,7 @@ export class OpMean extends IoOperator {
 
 				const prev_ts = this.hist[i - 1]?.ts ?? begin;		// oldest entry has no predecessor: treat as if value was held since begin
 				const from    = clamp(prev_ts);						// clamp interval start into window
-				const until   = clamp(curr.ts);						// clamp interval end   into window
+				const until   = clamp((clock && i === this.hist.length - 1) ? end : curr.ts);	// clamp interval end into window; clock mode holds the newest value to the tick
 				const ms      = until - from;						// duration of this entry's contribution within the window
 				if		(ms      >  0    )	{ integral += ms*curr.val;	}	// entry overlaps the window: accumulate
 				else if (curr.ts <= begin)	{ keepFrom  = i;  break;	}	// entry ends before the window: keep as prev_ts anchor for the next step() call, discard everything older
