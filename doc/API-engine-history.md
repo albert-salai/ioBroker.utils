@@ -1,10 +1,26 @@
 # IoHistoryEngine — History Mode
 
-Entered via `IoEngine.start(historyDays > 0)` → `IoHistoryEngine.run()`.
+**Purpose:** behaviour of the SQL history replay that runs before live mode (`src/io-history-engine.ts`).
+
+**Audience:** Claude sessions and developers writing operators or changing the replay.
+
+**Contains:** pipeline, simulated clock, src/dst classification, write path, flush and delete behaviour, operator
+contract during replay.
+
+**Not here:** `IoEngine.start()` signature (`API-engine.md`), live mode (`API-engine-live.md`), `IoSql` API and
+`IoTimer` fields (`API-core.md`).
+
+Entered via `IoEngine.start(historyDays > 0)` → `new IoHistoryEngine().run(historyDays, allStates)`. The instance is
+single-use. `run()` returns `false` when SQL is unavailable (no history instance, or `dbtype` is not `mysql`); the
+caller then seeds from ioBroker (see `API-engine-live.md`).
+
+The same file exports `optimizeSql(): Promise<boolean>` (re-exported by `src/index.ts`): connects, runs
+`optimizeTablesAsync()`, disconnects; `false` if SQL is unavailable. `run()` does not call it.
 
 ## Purpose
 
-Before going live, `IoHistoryEngine` replays SQL history to recompute derived (dst) state values from raw (src) state history. This ensures SQL contains consistent computed outputs from `fromTs` (= now − historyDays) up to wall time, even if the adapter was offline or restarted.
+`run()` recomputes derived (dst) state values from raw (src) state history for `fromTs` (= now − `historyDays`) up to
+wall time, so SQL is consistent even if the adapter was offline.
 
 ```
   SQL                    Engine                               SQL
@@ -21,38 +37,44 @@ Before going live, `IoHistoryEngine` replays SQL history to recompute derived (d
 ## Startup Sequence
 
 ```
-IoEngine.start()
-  └─ IoHistoryEngine.run()
-       ├─ sql_connect()               — returns false if SQL unavailable; caller falls back to live seeding
-       ├─ sql.optimizeTablesAsync()   — optional, if adapter config 'sql-optimize' is set
-       ├─ Timer.configure(offline)    — redirect Timer to simulated-clock implementation
-       ├─ IoStates.writeFn = hist_write — redirect writes to buffered SQL path (not ioBroker)
-       ├─ sql.delHistory(dstStateIds) — delete existing dst history from fromTs in chunks
-       ├─ hist_init()        — seed all states: last SQL value before window,
-       │                        else first value in window (timestamped at fromTs),
-       │                        else current ioBroker state (throws if not found)
-       ├─ hist_replay()      — read src rows from SQL in adaptive chunks; call
-       │                        srcState.onStateChange() per row to drive operators
-       ├─ hist_setNow(now)   — advance simulated clock to wall time, firing any
-       │                        expired timers
-       ├─ hist_convertTimers() — convert remaining offline timers to live JS timers
-       ├─ hist_flush()       — flush remaining buffered SQL writes
-       ├─ fix dstState divergence — delete + rewrite any dst SQL row whose value
-       │                            diverged from in-memory state during replay
-       ├─ sync srcStates     — re-read any src states that changed in ioBroker
-       │                        while history processing ran
-       └─ sql.onUnload()
-  └─ Timer.configure()       — restore live JS timer implementations (always, after run())
+IoHistoryEngine.run(historyDays, allStates)
+  ├─ sql_connect()               — false if SQL unavailable
+  ├─ IoTimer.configure({...})    — simulated-clock setTimer / clearTimer / now
+  ├─ IoStates.setWriteFn(hist_write) — buffered SQL path instead of ioBroker
+  ├─ classify states             — srcStates / dstStates; warn for dst without SQL datapoint
+  ├─ sql.delHistory(dstStateIds) — delete dst history from fromTs, in 21-day chunks (ReadDaysLimit/2)
+  ├─ hist_init()                 — seed all states (see below)
+  ├─ hist_replay()               — read src rows in adaptive chunks; drive srcState.onStateChange() per row
+  ├─ hist_setNow(Date.now())     — advance simulated clock to wall time, firing expired timers
+  ├─ hist_convertTimers()        — IoTimer.configure() (live), then convert remaining timers to live timers
+  ├─ hist_flush()                — flush remaining buffered writes
+  ├─ fix dstState divergence     — if the ioBroker value differs from the in-memory dst value: delete the
+  │                                SQL row at dstState.ts, then adapter.writeState(dst val, ack=true, ts)
+  ├─ sync srcStates              — srcState.onStateChange() for src states whose ioBroker value changed meanwhile
+  └─ sql.onUnload()
 ```
+
+`hist_init()` seeds each state (`ack=true`, non-null rows only), first match wins:
+
+1. last SQL value before `fromTs` (own `ts`);
+2. first SQL value from `fromTs` (`ts = fromTs`);
+3. current ioBroker state; written back to ioBroker only for srcStates. Throws if the state is missing or null.
+
+A seed `ts <= 0` is logged and replaced by `fromTs`.
+
+`IoEngine.start()` restores live timers (`IoTimer.configure()`) and installs the live `writeFn` afterwards; see
+`API-engine-live.md`.
 
 ## Clock
 
-During history mode `IoHistoryEngine` uses a simulated clock (`histNow`) instead of wall time:
+`IoHistoryEngine` replaces the `IoTimer` statics with simulated implementations:
 
 - `histNow` starts at `fromTs` and advances to each SQL row's `ts` via `hist_setNow()`.
-- `Timer.now()` returns `histNow`, so operators see the simulated time.
-- Timers are queued in `histTimers` (sorted by `expireTs`) and fire as the clock advances.
-- SQL rows must arrive in strictly increasing `ts` order — a violation throws and aborts replay.
+- `IoTimer.now()` returns `histNow`, so operators see simulated time.
+- Timers are queued in `histTimers` (sorted by `expireTs`). `hist_setNow(next)` fires every timer with
+  `expireTs <= next` in order, setting `histNow = expireTs` before each callback; interval timers are re-queued
+  (`expireTs += intervalMs`), one-shots removed. `hist_clearTimer()` removes a timer and logs an error if unknown.
+- A row with `ts < histNow` logs an error and throws, which aborts the replay.
 
 ```
   time
@@ -67,26 +89,38 @@ During history mode `IoHistoryEngine` uses a simulated clock (`histNow`) instead
                write    write    write    write
 ```
 
+`hist_convertTimers()`: per remaining timer, `timeoutMs = expireTs - now`; one-shot: fire at once if `<= 0`, else
+live `setTimer`; interval: if `<= 0` fire once and start a live interval, else live timeout + interval.
+
 ## State Classification
 
-States are split into two groups at the start of `run()`:
+At the start of `run()` every state goes into one group:
 
-- **srcStates** — have real SQL history; they drive operators by calling `onStateChange()` for each row.
-  Condition: `writable === true` OR `writtenByOperators.length === 0`
-- **dstStates** — computed outputs written by operators; their existing SQL history is deleted from `fromTs` before replay, then rewritten by `hist_write()`.
-  Condition: `writtenByOperators.length > 0` AND `writable === false`
+- **dstStates** — computed outputs: `writerCount > 0` AND `writable === false`. Their SQL history from `fromTs` is
+  deleted before replay and rewritten by `hist_write()`.
+- **srcStates** — all others: they drive operators by calling `onStateChange()` per SQL row.
+
+## Replay
+
+`hist_replay()` reads `ack=true`, non-null rows of the srcStates with `IoSql.readHistory({ from, before, limit })`:
+
+- window = `min(42 days, 150000 / rowsPerDay)`, `rowsPerDay` starts at 25000 and is re-estimated per chunk;
+- when a chunk reaches the limit (225000 rows) it is re-read with a narrower window; an empty chunk before wall time
+  lowers the density estimate and advances the window;
+- chunk N is replayed (`hist_replayRows()`) while chunk N+1 is read.
 
 ## Write Path
 
-During history mode, `IoStates.writeFn` routes through `hist_write()` instead of the adapter:
+`IoStates.writeFn` is `hist_write(ioState, val)`:
 
-1. Calls `ioState.onStateChange(val, histNow)` to propagate the value in-memory (may recursively trigger further operator executions).
-2. Buffers `{ stateId, val, ts }` in `histWriteCache` — writable states are skipped because commands have no SQL history.
-3. Flushes to SQL in batches of `flushSize` rows. `flushSize` is auto-tuned via exponential moving average to keep each flush at ~1 second.
+1. `ioState.onStateChange(val, histNow)` propagates in memory (recursively triggers further operators).
+2. Non-writable states are buffered as `{ stateId, val, ts: histNow }` in `histWriteCache`; writable states are
+   skipped (commands have no SQL history).
+3. At `flushSize` buffered rows, `hist_flush()` runs asynchronously (`IoSql.writeHistory`); at most one flush is in
+   flight. `flushSize` starts at 35000 and is tuned per flush toward ~1 s: clamped to 10000–50000, smoothed
+   `(new + 3·old) / 4`.
 
 ## Operator Contract
 
-Operators must inspect context (e.g. adapter config, time, external state) to skip side effects during replay. The `onTrigger()` / `execute()` call sequence is otherwise identical to live mode.
-
----
-*Last updated: 2026-04-15*
+Operators skip side effects during replay by inspecting context (adapter config, time, external state). The
+`onTrigger()` / `execute()` sequence is otherwise identical to live mode (`API-engine-live.md`, Operator Contract).

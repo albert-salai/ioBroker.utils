@@ -1,38 +1,53 @@
 # IoEngine — Live Mode
 
-Entered after `IoHistoryEngine.run()` completes, or directly via `start(historyDays = 0)`.
+**Purpose:** behaviour of the live part of `IoEngine.start()` (`src/io-engine.ts`).
 
-## Purpose
+**Audience:** Claude sessions and developers writing operators or changing the engine.
 
-Processes real-time ioBroker state changes and routes operator outputs back to ioBroker. This is the normal running state of the engine.
+**Contains:** seeding without history, `writeFn`, subscription loop, operator contract in live mode.
+
+**Not here:** `start()` signature (`API-engine.md`), history replay (`API-engine-history.md`), `IoState` and
+`IoTimer` API (`API-engine.md`, `API-core.md`).
+
+Entered after `IoHistoryEngine.run()` returned `true`, or directly when `historyDays = 0` or `run()` returned `false`.
 
 ## Startup Sequence
 
 ```
-// Always (IoEngine.start(), after IoHistoryEngine.run() or when historyDays = 0):
-Timer.configure()                          — restore live JS timer implementations
-
-// Only when skipping history mode (historyDays = 0, or IoHistoryEngine returned false):
-await Promise.all(allStates.map(readState))  — seed initial values in parallel from ioBroker
-  // throws if any state has val == null, missing state, or future ts (clock skew)
+// Only when no history replay happened:
+await Promise.all(allStates.map(readState))  — seed val/ts in parallel from ioBroker via ioState.set()
+  // after reading all: throws if any state is missing, has val == null, or has a future ts (clock skew)
 
 // Always:
-IoStates.writeFn = adapter.writeState      — install live write handler
-await Promise.all(allStates.map(subscribe)) — subscribe all states in parallel (ack=true)
+IoTimer.configure()                           — restore live JS timer implementations
+IoStates.setWriteFn(live writeFn)             — install live write handler
+await Promise.all(allStates.map(subscribe))   — subscribe all states in parallel (ack=true)
 ```
+
+Before this, `start()` creates folder objects (`add_folders()`) for the path segments of states under the adapter
+namespace.
 
 ## Clock
 
-Wall clock — `Timer.now()` returns `Date.now()`. Timers use standard JS `setTimeout`/`setInterval`.
+Wall clock: `IoTimer.now()` is `Date.now()`; timers use the adapter's `setTimeoutAsync` / `setIntervalAsync`.
+
+## Write Path
+
+The live `writeFn` calls `adapter.writeState(stateId, { val, ack, ts: Date.now() })`:
+
+- `ack = true` for read-only states (computed values);
+- `ack = false` for writable states (a command to ioBroker).
 
 ## Subscription Loop
 
-Each state is subscribed with `ack = true`. On change:
+Each state is subscribed with `ack = true`. On every ack'd event (value may be unchanged):
 
-1. `ioState.onStateChange(val, ts)` — updates val/ts, triggers `triggerOperators` if val changed.
-2. Operator `onTrigger()` → `execute()` → `IoStates.writeFn()` → `adapter.writeState()` → subscription fires again.
+1. `ioState.onStateChange(val, ts)` updates val/ts and triggers `triggerOperators` only if val changed.
+2. Operator `onTrigger()` → `execute()` → `ioState.write()` → `writeFn` → `adapter.writeState()` → the subscription
+   fires again for the written state.
 
-This loop is recursive but bounded: it terminates once operator outputs stabilise (no value changes).
+The loop terminates once operator outputs stabilise (no value changes). A writable state is written with `ack=false`,
+so it does not re-enter the loop until the owning adapter acknowledges it.
 
 ```
   ioBroker          Engine               Operator
@@ -58,20 +73,12 @@ This loop is recursive but bounded: it terminates once operator outputs stabilis
      |                 |   values stable)   |
 ```
 
-## Write Path
-
-When an operator writes a value, `IoStates.writeFn` calls `adapter.writeState(stateId, { val, ack, ts })`:
-
-- `ack = true` for read-only outputs (computed values).
-- `ack = false` for writable states (signals a command to ioBroker).
-
-The written state immediately triggers the subscribed ack change handler, which calls `ioState.onStateChange()` and re-executes dependent operators.
-
 ## Operator Contract
 
 Operators may perform side effects and external calls in live mode.
 
-`onTrigger()` calls `setup()` once on the first trigger; if `setup()` returns `false`, `execute()` is skipped and `setup()` is retried on the next trigger. Once `setup()` returns `true`, `execute()` is called on every trigger.
+`IoOperator.onTrigger()` calls `setup()` while the operator is not ready; if `setup()` returns `false`, `execute()` is
+skipped and `setup()` is retried on the next trigger. Once `setup()` returns `true`, `execute()` runs on every trigger.
 
 ```
   trigger: state change
@@ -87,6 +94,3 @@ Operators may perform side effects and external calls in live mode.
           v
      IoStates.writeFn
 ```
-
----
-*Last updated: 2026-04-15*
