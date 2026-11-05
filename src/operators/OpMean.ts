@@ -14,6 +14,10 @@ import type { AnyState }	from '../io-state';
  * Output can be updated on every input change (event mode) or on a fixed wall-clock interval (clock mode). Event mode
  * writes only a changed output; clock mode writes every tick, so the output history has no gaps. Ticks fall on local-time
  * multiples of the interval (a 24 h clock ticks at local midnight, also across a DST change).
+ * Deferred ticks (`deferred`, clock mode): a tick only records its timestamp T; the mean for the window ending at T is
+ * computed and written (at now) when the next input sample arrives. With a backward input the first sample after T
+ * covers T, so the value is exact; a forward input gives the non-deferred value, late. Pending ticks are lost on restart.
+ *
  * An optional `scale` multiplies the mean (default 1.0), then an optional precision snaps the output to the nearest
  * multiple before writing.
  */
@@ -24,9 +28,11 @@ export class OpMean extends IoOperator {
 	private readonly	clockMs:		number | null;								// output interval [ms]; null = event mode (update on every input change)
 	private readonly	precision:		number | null;								// output snap increment; null = disabled
 	private readonly	scale:			number;										// output factor, applied before precision
+	private readonly	deferred:		boolean;									// clock mode: ticks wait for the next input sample
 	private readonly	backward:		boolean;									// false: val[i] valid from           curr.ts → next.ts (forward)
 																					// true:  val[i] valid from prev.ts → curr.ts           (backward)
 
+	private readonly	pendingTicks:	number[]							= [];	// deferred mode: tick timestamps awaiting the next sample
 	private readonly	hist:	{ val: number, ts: number }[]		= [];	// log of input samples; new entries appended in execute(), old entries pruned in step()
 
 	/*
@@ -34,15 +40,17 @@ export class OpMean extends IoOperator {
 	 * `clockSecs`: output interval in seconds; <= 0 enables event mode.
 	 * `precision`: if set, output is rounded to the nearest multiple of this value.
 	 * `backward`: if true, use backward timestamp convention (default: false).
+	 * `deferred`: clock mode only; compute each tick's mean when the next input sample arrives (default: false).
 	 * `scale`: output factor, default 1.0.
 	 */
-	constructor({ Input, Output, periodSecs, clockSecs, precision, backward, scale }: {
+	constructor({ Input, Output, periodSecs, clockSecs, precision, backward, deferred, scale }: {
 		Input:				IoState<number>,
 		Output:				IoState<number>,
 		periodSecs:			number,
 		clockSecs:			number,
 		precision?:			number,
 		backward?:			boolean,
+		deferred?:			boolean,
 		scale?:				number,
 	}) {
 		super([ Input ], [ Output ], []);
@@ -55,6 +63,7 @@ export class OpMean extends IoOperator {
 		this.scale			= scale ?? 1;
 		this.precision		= precision ?? null;
 		this.backward		= backward  ?? false;
+		this.deferred		= (deferred ?? false)  &&  this.clockMs !== null;
 	}
 
 	/* Seeds hist from historical data and, in clock mode, arms the first tick. */
@@ -62,19 +71,21 @@ export class OpMean extends IoOperator {
 		const end		= this.Input.ts - 1;					// fetch history up to just before the current value
 		const start		= end - this.periodMs;
 		const history	= await this.Input.getHistory({ start, end, 'limit': 10000 });
-		if (history.length === 0) {
-			this.hist.push({ 'ts': 0, 'val': this.Input.val });	// no history: seed from current value at ts := 0
+		// no start: sql.0 then returns the newest row up to end, the sample that covers the window start exactly
+		const before	= (await this.Input.getHistory({ end: start - 1, limit: 1 })).at(-1);
 
-		} else {
-			let oldest: { val: number, ts: number } | undefined;
-			for (const { ts, val } of history) {
-				const entry = { ts, val };
-				oldest ??= entry;
-				this.hist.push(entry);
-			}
-			if (oldest !== undefined) {
-				oldest.ts = 0;	// anchor oldest entry at ts := 0 so the window is always fully covered
-			}
+		if (before !== undefined) {
+			this.hist.push({ 'ts': before.ts, 'val': before.val });
+		}
+		for (const { ts, val } of history) {
+			this.hist.push({ ts, val });
+		}
+
+		const oldest = this.hist[0];
+		if (oldest === undefined) {
+			this.hist.push({ 'ts': 0, 'val': this.Input.val });	// no history: seed from current value at ts := 0
+		} else if (before === undefined) {
+			oldest.ts = 0;	// no sample before the window: anchor the oldest entry at ts := 0 so the window is always fully covered
 		}
 
 		if (this.clockMs !== null) {
@@ -102,7 +113,11 @@ export class OpMean extends IoOperator {
 		if (nextTs <= now) { nextTs = now + intervalMs; }	// DST fold: never schedule in the past
 
 		IoTimer.setTimer({ name: this.constructor.name, timeoutMs: nextTs - now, cb: async () => {
-			await this.step();
+			if (this.deferred) {
+				this.pendingTicks.push(nextTs);
+			} else {
+				await this.step();
+			}
 			this.scheduleTick(intervalMs);
 		}});
 	}
@@ -117,6 +132,10 @@ export class OpMean extends IoOperator {
 
 		if (this.clockMs === null) {
 			await this.step();	// event mode: recompute immediately on each input change
+		} else {
+			for (const tickTs of this.pendingTicks.splice(0)) {
+				await this.step(tickTs);
+			}
 		}
 	}
 
@@ -129,11 +148,12 @@ export class OpMean extends IoOperator {
 
 
 	/*
-	 * Computes the time-weighted mean of Input over the last periodMs, writes it to Output and prunes hist entries that
+	 * Computes the time-weighted mean of Input over the last periodMs before `endTs` (default: the end described
+	 * per mode below), writes it to Output and prunes hist entries that
 	 * no later window can need. Called on every input change (event mode) or on a clock tick (clock mode).
 	 * Nothing is written for periodMs 0 or an empty hist; event mode also needs two samples. Resolves after the write.
 	 */
-	private async step(): Promise<void> {
+	private async step(endTs?: number): Promise<void> {
 		const clock = (this.clockMs !== null);
 		// clock mode: a single sample is a valid held value
 		if (this.periodMs === 0 || this.hist.length === 0 || (!clock && this.hist.length < 2)) { return; }
@@ -149,7 +169,7 @@ export class OpMean extends IoOperator {
 			// Clock mode: end is the tick and the newest value is held from its own ts to the tick; otherwise a tick
 			// hours after the last sample would average a shifted window.
 			const lastTs = this.hist[this.hist.length - 1]?.ts ?? 0;			// hist is not empty, see above
-			const end   = clock ? Math.max(lastTs, IoTimer.now()) : lastTs;
+			const end   = endTs ?? (clock ? Math.max(lastTs, IoTimer.now()) : lastTs);
 			const begin = end - this.periodMs;
 			const clamp = (ts: number) => Math.max(begin, Math.min(end, ts));	// keeps timestamps within [ begin, end ]
 
@@ -168,7 +188,7 @@ export class OpMean extends IoOperator {
 		} else {
 			// Each sample val[i] is valid from curr.ts until the next sample arrives (next.ts).
 			// Integration window: [ now - periodMs, now ]; the newest value is held until now.
-			const end   = IoTimer.now();
+			const end   = endTs ?? IoTimer.now();
 			const begin = end - this.periodMs;
 			const clamp = (ts: number) => Math.max(begin, Math.min(end, ts));	// keeps timestamps within [ begin, end ]
 

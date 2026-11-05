@@ -279,8 +279,8 @@ export class IoHistoryEngine {
 
 
 	/* IoStates.writeFn replacement for history replay: propagates val via onStateChange and buffers non-writable states for SQL insert. Flushes when the cache exceeds flushSize. */
-	private async hist_write(ioState: AnyState, val: ValType, tsArg?: number): Promise<void> {
-		const ts = tsArg ?? this.histNow;
+	private async hist_write(ioState: AnyState, val: ValType): Promise<void> {
+		const ts = this.histNow;
 		await ioState.onStateChange(val, ts);		// recursion: onStateChange() --> op.onTrigger() --> op.execute() --> IoStates.writeFn() --> hist_write() --> onStateChange()
 
 		// only buffer read-only outputs; skip writable states (commands have no SQL history)

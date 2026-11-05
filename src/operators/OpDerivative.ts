@@ -9,11 +9,10 @@ import type { AnyState }	from '../io-state';
  * The input is taken as linear between two changes, so the output is its exact slope there; the mean of the output
  * over any window (OpMean) equals the input difference over that window divided by its length.
  *
- * Two timestamp conventions are supported; the output describes the interval prev.ts → curr.ts and is written with
- *   - forward  (default): ts = prev.ts: valid from its own timestamp until the next sample arrives.
- *   - backward:           ts = curr.ts: valid from the previous sample's timestamp up to its own timestamp.
- * Feed a downstream OpMean with forward: an unchanged output triggers no operator (IoState.onStateChange), which a
- * forward mean bridges by holding the value, while a backward mean would stretch the next value over that interval.
+ * The output describes the interval prev.ts → curr.ts and is written at now (no backdating), so it follows the
+ * backward timestamp convention: valid from the previous sample's timestamp up to its own timestamp. Feed a downstream
+ * OpMean with `backward: true`, and without `precision` here: an unchanged output triggers no operator
+ * (IoState.onStateChange), and a backward mean would then stretch the next value over the skipped interval.
  *
  * An optional `scale` multiplies the derivative (default 1.0), then an optional precision snaps the output to the
  * nearest multiple before writing. Nothing is written for the first sample or for time that does not advance.
@@ -26,22 +25,18 @@ export class OpDerivative extends IoOperator {
 	private readonly	perMs:			number;										// time unit of the output [ms]; > 0
 	private readonly	precision:		number | null;								// output snap increment; null = disabled
 	private readonly	scale:			number;										// output factor, applied before precision
-	private readonly	backward:		boolean;									// false: written at prev.ts (forward)
-																					// true:  written at curr.ts (backward)
 	private				prev:			{ val: number, ts: number } | undefined;	// previous input sample
 
 	/*
 	 * `perSecs`: time unit of the output in seconds (default 1: per second; 3600: per hour).
 	 * `precision`: if set, output is rounded to the nearest multiple of this value.
-	 * `backward`: if true, use backward timestamp convention (default: false).
 	 * `scale`: output factor, default 1.0.
 	 */
-	constructor({ Input, Output, perSecs, precision, backward, scale }: {
+	constructor({ Input, Output, perSecs, precision, scale }: {
 		Input:				IoState<number>,
 		Output:				IoState<number>,
 		perSecs?:			number,
 		precision?:			number,
-		backward?:			boolean,
 		scale?:				number,
 	}) {
 		super([ Input ], [ Output ], []);
@@ -52,7 +47,6 @@ export class OpDerivative extends IoOperator {
 		this.perMs			= Math.round(1000*(perSecs ?? 1));		// [ms/unit]
 		this.scale			= scale ?? 1;
 		this.precision		= precision ?? null;
-		this.backward		= backward  ?? false;
 	}
 
 	/* Seeds prev from the newest input sample before the current value. */
@@ -78,7 +72,7 @@ export class OpDerivative extends IoOperator {
 		if (!prev || curr.ts <= prev.ts) { return; }
 
 		const slope = (curr.val - prev.val) * this.perMs / (curr.ts - prev.ts);
-		await this.Output.write(this.finish(slope), this.backward ? curr.ts : prev.ts);
+		await this.Output.write(this.finish(slope));
 	}
 
 
