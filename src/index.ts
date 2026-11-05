@@ -19,6 +19,7 @@ export { optimizeSql }			from './io-history-engine';
 // generic reactive operators
 export { OpAutoOnOff }							from './operators/OpAutoOnOff';
 export { OpBiQuadFilter }						from './operators/OpBiQuadFilter';
+export { OpDerivative }							from './operators/OpDerivative';
 export { OpDewpoint }							from './operators/OpDewpoint';
 export { OpDiff }								from './operators/OpDiff';
 export { OpFollowSwitch }						from './operators/OpFollowSwitch';
