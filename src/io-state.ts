@@ -5,7 +5,7 @@ import { IoOperator }		from './io-operator';
 export type AnyState = IoState<ValType>;
 
 // Injected by IoEngine to route writes through the adapter
-type WriteState	= (state: AnyState, val: ValType) => Promise<void>;
+type WriteState	= (state: AnyState, val: ValType, ts?: number) => Promise<void>;
 
 /* Registry and factory for IoState instances. writeFn is injected by IoEngine before engine.start(). */
 class IoStateStore {
@@ -20,7 +20,7 @@ class IoStateStore {
 	public setWriteFn(fn: WriteState): void { this.writeFn = fn; }
 
 	/* Routes the write through the active writeFn. Called by IoState.write(). */
-	public async write(state: AnyState, val: ValType): Promise<void> { return this.writeFn(state, val); }
+	public async write(state: AnyState, val: ValType, ts?: number): Promise<void> { return this.writeFn(state, val, ts); }
 
 	/* Self-registration entry point — called by the IoState constructor. */
 	public register(state: AnyState): void { this.registry[state.stateId] = state; }
@@ -193,13 +193,16 @@ export class IoState<T extends ValType> {
 	/*
 	 * Writes val to the ioBroker state via IoStates.writeFn.
 	 * Logs an error and skips non-finite numbers to avoid persisting NaN or Infinity.
+	 * `ts` (epoch-ms, default: now, in replay the simulated clock) backdates the written state, for values that
+	 * describe an interval already ended. The caller must keep `ts` ascending per state: the SQL history is
+	 * keyed by (id, ts).
 	 */
-	public async write(val: T): Promise<void> {
+	public async write(val: T, ts?: number): Promise<void> {
 		if ((typeof val === 'number'  &&  ! Number.isFinite(val))) {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'write()', '', this.stateId, dateStr(), valStr(val));
 
 		} else {
-			await IoStates.write(this, val);
+			await IoStates.write(this, val, ts);
 		}
 	}
 

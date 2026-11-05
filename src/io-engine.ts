@@ -46,8 +46,8 @@ export class IoEngine {
 
 		// live: restore real IoTimer and install writeFn, then subscribe to all states
 		IoTimer.configure();
-		IoStates.setWriteFn(async (ioState: AnyState, val: ValType): Promise<void> => {
-			const ts  =   Date.now();
+		IoStates.setWriteFn(async (ioState: AnyState, val: ValType, tsArg?: number): Promise<void> => {
+			const ts  =   tsArg ?? Date.now();
 			const ack = ! ioState.writable;
 			if (ioState.logType === 'write') {
 				this.logf.debug('%-15s %-15s %-10s %-50s %s   %s%s', ioState.constructor.name, 'write()', '', ioState.stateId, dateStr(ts), valStr(val), ack ? '' : ' cmd');

@@ -142,6 +142,14 @@ export class IoAdapter extends Adapter {
 				const { val, ack, ts } = stateChange;
 				if (val === null) {
 					this.logf.warn('%-15s %-15s %-10s %-50s', this.constructor.name, 'onStateChange()', 'val null', stateId);
+					if (! stateChange.ack) {
+						this.mutex.runExclusive(async () => {
+							await this.onNullWrite(stateId);
+						}).catch((err: unknown) => {
+							const msg = (err instanceof Error) ? (err.stack ?? err.message) : String(err);
+							this.logf.error('%-15s %-15s %-10s %-50s\n%s', this.constructor.name, 'onNullWrite()', 'error', stateId, msg);
+						});
+					}
 
 				} else {
 					this.mutex.runExclusive(async () => {
@@ -400,6 +408,12 @@ export class IoAdapter extends Adapter {
 		}
 	}
 
+
+
+	/* Called, under the dispatch mutex, for an `ack:false` write of `null` to a subscribed state: no spec sees it (a spec's val is never null). Default: nothing. */
+	protected async onNullWrite(_stateId: string): Promise<void> {
+		await Promise.resolve();
+	}
 
 
 	/* Dispatches a state-change event to all registered specs for stateId, filtering by val/ack if specified. */
