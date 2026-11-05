@@ -14,8 +14,13 @@ import type { AnyState }	from '../io-state';
  * OpMean with `backward: true`, and without `precision` here: an unchanged output triggers no operator
  * (IoState.onStateChange), and a backward mean would then stretch the next value over the skipped interval.
  *
- * An optional `scale` multiplies the derivative (default 1.0), then an optional precision snaps the output to the
- * nearest multiple before writing. Nothing is written for the first sample or for time that does not advance.
+ * An optional `scale` multiplies the derivative (default 1.0), then an optional `precision` snaps the result before
+ * writing.
+ * `precision` is a snap step, not a number of decimals: the output is `Math.round(value * scale / precision) *
+ * precision` (1: whole numbers, 0.1: one decimal, 0.25: quarters, 5: multiples of 5); unset: no rounding. 0 is invalid
+ * (division by zero). A step such as 0.1 can leave float noise (0.30000000000000004); whole numbers and 0.25 are exact.
+ * Too coarse a step loses information (a slow discharge curve turns into plateaus).
+ * Nothing is written for the first sample or for time that does not advance.
  * For a counter (e.g. kWh -> kW with `perSecs: 3600`) a reset writes one negative slope; a read glitch (drop and
  * return) writes two slopes that cancel in a downstream mean.
  */

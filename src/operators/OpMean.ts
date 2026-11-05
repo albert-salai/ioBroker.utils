@@ -14,12 +14,24 @@ import type { AnyState }	from '../io-state';
  * Output can be updated on every input change (event mode) or on a fixed wall-clock interval (clock mode). Event mode
  * writes only a changed output; clock mode writes every tick, so the output history has no gaps. Ticks fall on local-time
  * multiples of the interval (a 24 h clock ticks at local midnight, also across a DST change).
- * Deferred ticks (`deferred`, clock mode): a tick only records its timestamp T; the mean for the window ending at T is
- * computed and written (at now) when the next input sample arrives. With a backward input the first sample after T
- * covers T, so the value is exact; a forward input gives the non-deferred value, late. Pending ticks are lost on restart.
+ * The output is always written at now (no backdating); the window it describes ends at the tick (clock mode) or at the
+ * newest sample (backward event mode) or at now (forward event mode).
  *
- * An optional `scale` multiplies the mean (default 1.0), then an optional precision snaps the output to the nearest
- * multiple before writing.
+ * Deferred ticks (`deferred: true`, clock mode only, ignored in event mode): a tick only records its timestamp T; the
+ * mean for the window ending at T is computed and written when the next input sample arrives. With a backward input the
+ * first sample after T covers T, so the value is exact; a forward input gives the non-deferred value, late. Several
+ * ticks pending at one sample are written in order within the same millisecond: the output history (keyed by id and
+ * ts) keeps only the last. Pending ticks are lost on restart.
+ *
+ * Start-up seeds the window from history, including the newest sample before the window start, so the first windows
+ * are exact; without such a sample the oldest one is held back to the window start.
+ *
+ * An optional `scale` multiplies the mean (default 1.0), then an optional `precision` snaps the result before writing.
+ * `precision` is a snap step, not a number of decimals: the output is `Math.round(value * scale / precision) *
+ * precision` (1: whole numbers, 0.1: one decimal, 0.25: quarters, 5: multiples of 5); unset: no rounding. 0 is invalid
+ * (division by zero). A step such as 0.1 can leave float noise (0.30000000000000004); whole numbers and 0.25 are exact.
+ * Too coarse a step loses information (a slow discharge curve turns into plateaus).
+ * Event mode compares the rounded value, so a change smaller than the step writes nothing.
  */
 export class OpMean extends IoOperator {
 	private readonly	Input:			IoState<number>;

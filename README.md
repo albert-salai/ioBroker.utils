@@ -164,7 +164,8 @@ await sql.writeHistory(stateId, [{ ts, val, ack: true }]);
 | `OpFollowSwitch` | Output mirrors a boolean input |
 | `OpIfThenElse` | Conditional write |
 | `OpLowerBound` | Enforce minimum value |
-| `OpMean` | Arithmetic mean of N inputs |
+| `OpDerivative` | Slope between the last two input changes (kWh -> kW) |
+| `OpMean` | Time-weighted mean over a sliding window, on input change or on a clock |
 | `OpMovingAvg` | Exponential moving average |
 | `OpOnOffDelay` | Delayed boolean transitions |
 | `OpPartPress` | Partial pressure from temperature + humidity |
