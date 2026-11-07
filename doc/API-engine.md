@@ -47,7 +47,8 @@ class IoState<T extends ValType> {
   set(val: T, ts: number): void           // seeds val+ts; ts < 0: error logged, nothing changed
   onStateChange(val: T, ts: number): Promise<void>
     // ts < 0: error logged, nothing changed; else ts is set always; if val differs it is set and
-    // each trigger operator's onTrigger(this) is awaited in registration order
+    // each trigger operator's onTrigger(this) is awaited in registration order; if val is unchanged, only
+    // those with triggerOnUnchanged
   write(val: T): Promise<void>            // via IoStates.write(); non-finite number: error logged, not written
   getHistory(options: { start?, end?, ack?, limit? }): Promise<{ ts: number, val: T }[]>
     // sendTo(historyId, 'getHistory', aggregate 'none', ignoreNull true); [] when no historyId
