@@ -54,8 +54,10 @@ export class OpMean extends IoOperator {
 	 * `backward`: if true, use backward timestamp convention (default: false).
 	 * `deferred`: clock mode only; compute each tick's mean when the next input sample arrives (default: false).
 	 * `scale`: output factor, default 1.0.
+	 * `triggerOnUnchanged`: a repeated input value is a sample too (default: false). A backward mean needs it if its
+	 * input can repeat, as it would otherwise stretch the next value over the skipped interval.
 	 */
-	constructor({ Input, Output, periodSecs, clockSecs, precision, backward, deferred, scale }: {
+	constructor({ Input, Output, periodSecs, clockSecs, precision, backward, deferred, scale, triggerOnUnchanged }: {
 		Input:				IoState<number>,
 		Output:				IoState<number>,
 		periodSecs:			number,
@@ -64,8 +66,9 @@ export class OpMean extends IoOperator {
 		backward?:			boolean,
 		deferred?:			boolean,
 		scale?:				number,
+		triggerOnUnchanged?:	boolean,
 	}) {
-		super([ Input ], [ Output ], []);
+		super([ Input ], [ Output ], [], { triggerOnUnchanged: triggerOnUnchanged ?? false });
 
 		this.Input			= Input;
 		this.Output			= Output;

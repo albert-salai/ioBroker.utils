@@ -69,7 +69,9 @@ abstract class IoOperator {
   protected readonly watchedStates: readonly AnyState[]   // read only, no trigger; ready before the first trigger
   protected readonly logf
 
-  constructor(inputStates, outputStates, watchedStates)
+  public readonly triggerOnUnchanged: boolean       // also trigger on an input event whose value did not change
+
+  constructor(inputStates, outputStates, watchedStates, opts?: { triggerOnUnchanged?: boolean })
     // calls registerTrigger(this) on each input and registerWriter(this) on each output
 
   protected setup(): Promise<boolean> | boolean     // default true; false = not ready, retried on the next trigger

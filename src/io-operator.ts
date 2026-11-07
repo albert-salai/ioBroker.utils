@@ -12,12 +12,17 @@ export abstract class IoOperator {
 	protected	readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be ready before first onTrigger()
 	protected	readonly	logf	= IoAdapter.logf;
 	private					ready	= false;
+	public		readonly	triggerOnUnchanged:	boolean;						// also trigger on an input event whose value did not change
 
-	/* Registers this operator in triggerOperators/writtenByOperators of the relevant states. */
-	constructor(inputStates: readonly AnyState[], outputStates: readonly AnyState[], watchedStates: readonly AnyState[]) {
-		this.watchedStates	= watchedStates;
-		this.inputStates	= inputStates;
-		this.outputStates	= outputStates;
+	/*
+	 * Registers this operator in triggerOperators/writtenByOperators of the relevant states.
+	 * `opts.triggerOnUnchanged`: for an operator that treats every input event as a sample, even with a repeated value.
+	 */
+	constructor(inputStates: readonly AnyState[], outputStates: readonly AnyState[], watchedStates: readonly AnyState[], opts: { triggerOnUnchanged?: boolean } = {}) {
+		this.watchedStates		= watchedStates;
+		this.inputStates		= inputStates;
+		this.outputStates		= outputStates;
+		this.triggerOnUnchanged	= opts.triggerOnUnchanged ?? false;
 
 		for (const input  of this.inputStates  )	{ input .registerTrigger(this); }
 		for (const output of this.outputStates )	{ output.registerWriter (this); }

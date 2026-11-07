@@ -42,7 +42,8 @@ The live `writeFn` calls `adapter.writeState(stateId, { val, ack, ts: Date.now()
 
 Each state is subscribed with `ack = true`. On every ack'd event (value may be unchanged):
 
-1. `ioState.onStateChange(val, ts)` updates val/ts and triggers `triggerOperators` only if val changed.
+1. `ioState.onStateChange(val, ts)` updates val/ts and triggers `triggerOperators` if val changed; on an unchanged val
+   only those with `triggerOnUnchanged`.
 2. Operator `onTrigger()` → `execute()` → `ioState.write()` → `writeFn` → `adapter.writeState()` → the subscription
    fires again for the written state.
 

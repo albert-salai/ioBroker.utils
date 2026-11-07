@@ -11,8 +11,9 @@ import type { AnyState }	from '../io-state';
  *
  * The output describes the interval prev.ts → curr.ts and is written at now (no backdating), so it follows the
  * backward timestamp convention: valid from the previous sample's timestamp up to its own timestamp. Feed a downstream
- * OpMean with `backward: true`, and without `precision` here: an unchanged output triggers no operator
- * (IoState.onStateChange), and a backward mean would then stretch the next value over the skipped interval.
+ * OpMean with `backward: true`; with `precision` here also with `triggerOnUnchanged: true`, as an output can then repeat
+ * and a backward mean would otherwise stretch the next value over the skipped interval. If the output logs to SQL, set
+ * `changesOnly: false` on it, or the mean's start-up reads a history without the repeated values.
  *
  * An optional `scale` multiplies the derivative (default 1.0), then an optional `precision` snaps the result before
  * writing.

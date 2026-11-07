@@ -171,8 +171,8 @@ export class IoState<T extends ValType> {
 
 	/*
 	 * Handles a state-change event (also replayed from history).
-	 * Triggers dependent operators only when val changes; skips operators when val is unchanged.
-	 * Promise resolves after all triggerOperators have finished executing.
+	 * Triggers dependent operators when val changes; on an unchanged val only those with `triggerOnUnchanged`.
+	 * Promise resolves after all triggered operators have finished executing.
 	 * Logs an error and skips all processing when ts is invalid.
 	 */
 	public async onStateChange(val: T, ts: number): Promise<void> {
@@ -180,11 +180,12 @@ export class IoState<T extends ValType> {
 			this.logf.error('%-15s %-15s %-10s %-50s %s   %s', this.constructor.name, 'onStateChange()', 'invalid ts', this.stateId, dateStr(ts), valStr(val));
 
 		} else {
-			this._ts = ts;
-			if (this._val !== val) {
-				this._val  = val;
-				for (const operator of this.triggerOperators) {
-					await  operator.onTrigger(this);
+			const changed	= (this._val !== val);
+			this._ts		= ts;
+			this._val		= val;
+			for (const operator of this.triggerOperators) {
+				if (changed  ||  operator.triggerOnUnchanged) {
+					await operator.onTrigger(this);
 				}
 			}
 		}

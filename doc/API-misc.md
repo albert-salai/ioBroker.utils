@@ -62,7 +62,7 @@ Subclasses of `IoOperator`, all exported from `src/index.ts`. `Input*` states tr
 | `OpPartPress` | `({ Relhum, Temp, Partpres })` | `Magnus.dd`, writes hPa; values above 50 hPa are dropped; seeds at start |
 | `OpBiQuadFilter` | `({ Input, Output, clockSecs, tauGr, minDelta?=0 })` | clocked 2nd-order low pass, `tauGr` > 1 group-delay ratio |
 | `OpDerivative` | `({ Input, Output, perSecs?=1, precision?, scale?=1 })` | slope between the last two input changes |
-| `OpMean` | `({ Input, Output, periodSecs, clockSecs, precision?, backward?, deferred?, scale? })` | time-weighted mean |
+| `OpMean` | `({ Input, Output, periodSecs, clockSecs, precision?, backward?, deferred?, scale?, triggerOnUnchanged? })` | time-weighted mean |
 | `OpMovingAvg` | `({ Input, Output, periodSecs, clockSecs, windowType })` | causal windowed mean of a step signal |
 
 - `OpAutoOnOff` and `OpFollowSwitch` / `OpSchmittTrig` throw in the constructor if the written state is not writable.
@@ -74,7 +74,8 @@ Subclasses of `IoOperator`, all exported from `src/index.ts`. `Input*` states tr
   input sample. `precision` is a snap step (`Math.round(v*scale/precision)*precision`), not a number of
   decimals. Start-up seeds the window from history.
 - `OpDerivative`: writes at now on every input change; nothing for the first sample or non-advancing time. Feed a
-  downstream `OpMean` with `backward: true`.
+  downstream `OpMean` with `backward: true`; with `precision` also with `triggerOnUnchanged: true`, and log the output
+  with `changesOnly: false`.
 - `OpMovingAvg`: `windowType` is `'rect' | 'hann' | 'hamming' | 'blackman' | 'nuttall'`; `clockSecs <= 0` is event
   mode; output delay `periodSecs/2`.
 - `OpBiQuadFilter`: writes only when the change exceeds `minDelta`.
