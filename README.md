@@ -160,7 +160,7 @@ await sql.writeHistory(stateId, [{ ts, val, ack: true }]);
 | `OpAutoOnOff` | Auto-switch boolean after timeout |
 | `OpBiQuadFilter` | Second-order IIR (biquad) filter |
 | `OpDewpoint` | Magnus-formula dew point |
-| `OpDiff` | Difference between consecutive values |
+| `OpDiff` | Difference of two inputs (`input1 - input2`) |
 | `OpFollowSwitch` | Output mirrors a boolean input |
 | `OpIfThenElse` | Conditional write |
 | `OpLowerBound` | Enforce minimum value |
