@@ -9,9 +9,6 @@
 **Not here:** development and packaging rules (`/opt/iobroker/my_modules/CLAUDE.md`), code and comment rules
 (`~/.claude/rules/code.md`), Markdown rules (`~/.claude/rules/markdown.md`).
 
-**iobroker-utils** — shared utilities for ioBroker adapter development, used by `ioBroker.danfossicon`,
-`ioBroker.rpi-io` and `ioBroker.switchboard-io`.
-
 **Path:** `/opt/iobroker/my_modules/iobroker-utils`; Linux (Raspberry Pi).
 
 ## API docs
