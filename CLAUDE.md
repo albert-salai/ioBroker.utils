@@ -2,7 +2,7 @@
 
 **Purpose:** project facts and the documentation rule for the shared library of the ioBroker adapters.
 
-**Audience:** every Claude Code session in this repo.
+**Audience:** every AGENT in this repo.
 
 **Contains:** path, documentation cross-reference rule, links to the API docs.
 
