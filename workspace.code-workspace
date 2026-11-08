@@ -2,6 +2,15 @@
 	"folders": [
 		{
 			"path": "."
+		},
+		{
+			"path": "/home/pi/.claude/rules"
+		},
+		{
+			"path": "/home/pi/.claude/skills"
+		},
+		{
+			"path": "/home/pi/.claude/hooks"
 		}
 	]
 }
