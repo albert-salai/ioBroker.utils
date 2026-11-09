@@ -1,16 +1,16 @@
 {
 	"folders": [
 		{
+			"name": "iobroker-utils",
 			"path": "."
 		},
 		{
-			"path": "/home/pi/.claude/rules"
+			"name": "ioBroker.switchboard-io",
+			"path": "../ioBroker.switchboard-io"
 		},
 		{
-			"path": "/home/pi/.claude/skills"
-		},
-		{
-			"path": "/home/pi/.claude/hooks"
+			"name": ".claude",
+			"path": "../../../../home/pi/.claude"
 		}
 	]
 }
