@@ -35,7 +35,8 @@ export abstract class IoOperator {
 	protected abstract execute(trigger: AnyState): Promise<void> | void;
 
 	/*
-	 * Called by IoState.onStateChange() when a triggering input state changes.
+	 * Called by IoState.onStateChange() when a triggering input state changes, or reports an unchanged
+	 * value and the operator sets triggerOnUnchanged.
 	 * Resolves after execute() completes. If setup() returns false, execute() is skipped
 	 * and setup() will be retried on the next trigger.
 	 */
