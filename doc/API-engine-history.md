@@ -107,7 +107,9 @@ At the start of `run()` every state goes into one group:
 - window = `min(42 days, 150000 / rowsPerDay)`, `rowsPerDay` starts at 25000 and is re-estimated per chunk;
 - when a chunk reaches the limit (225000 rows) it is re-read with a narrower window; an empty chunk before wall time
   lowers the density estimate and advances the window;
-- chunk N is replayed (`hist_replayRows()`) while chunk N+1 is read.
+- chunk N is replayed (`hist_replayRows()`) while chunk N+1 is read;
+- a repeated value is in the history only when its state is logged with `changesOnly: false`, so an operator with
+  `triggerOnUnchanged` sees fewer samples in replay than live.
 
 ## Write Path
 

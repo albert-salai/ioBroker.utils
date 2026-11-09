@@ -57,7 +57,7 @@ export class OpMean extends IoOperator {
 	 * `triggerOnUnchanged`: a repeated input value is a sample too (default: false). A backward mean needs it if its
 	 * input can repeat, as it would otherwise stretch the next value over the skipped interval.
 	 */
-	constructor({ Input, Output, periodSecs, clockSecs, precision, backward, deferred, scale, triggerOnUnchanged }: {
+	constructor({ Input, Output, periodSecs, clockSecs, precision, backward, deferred, scale, triggerOnUnchanged = false }: {
 		Input:				IoState<number>,
 		Output:				IoState<number>,
 		periodSecs:			number,
@@ -68,7 +68,7 @@ export class OpMean extends IoOperator {
 		scale?:				number,
 		triggerOnUnchanged?:	boolean,
 	}) {
-		super([ Input ], [ Output ], [], { triggerOnUnchanged: triggerOnUnchanged ?? false });
+		super([ Input ], [ Output ], [], { triggerOnUnchanged });
 
 		this.Input			= Input;
 		this.Output			= Output;

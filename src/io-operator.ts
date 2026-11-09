@@ -12,7 +12,7 @@ export abstract class IoOperator {
 	protected	readonly	watchedStates:	readonly AnyState[];	// read but not subscribed; must be ready before first onTrigger()
 	protected	readonly	logf	= IoAdapter.logf;
 	private					ready	= false;
-	public		readonly	triggerOnUnchanged:	boolean;						// also trigger on an input event whose value did not change
+	public		readonly	triggerOnUnchanged:	boolean;			// also trigger on an input event whose value did not change
 
 	/*
 	 * Registers this operator in triggerOperators/writtenByOperators of the relevant states.
