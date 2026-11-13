@@ -10,3 +10,4 @@ dist/
 
 # agent plan files (never committed)
 /plans/
+/reports/
